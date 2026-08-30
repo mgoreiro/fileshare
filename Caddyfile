@@ -1,0 +1,23 @@
+# Caddy obtiene y renueva automáticamente un certificado válido de Let's Encrypt
+# para el dominio indicado en la variable de entorno DOMAIN, siempre que:
+#   1. El dominio resuelva (DNS tipo A/AAAA) a la IP pública de este servidor.
+#   2. Los puertos 80 y 443 estén abiertos y accesibles desde Internet
+#      (el puerto 80 se usa para el reto HTTP-01 de Let's Encrypt).
+#
+# No hace falta tocar nada más: sin ".env" con DOMAIN válido, Caddy no podrá emitir
+# el certificado.
+
+{$DOMAIN} {
+	# Caddy no impone por defecto ningún límite de tamaño de subida ni timeouts
+	# de lectura/escritura, por lo que las subidas de ficheros grandes no se
+	# ven cortadas a este nivel.
+	reverse_proxy fileshare:3000
+	encode gzip
+
+	# Cabeceras de seguridad básicas
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}

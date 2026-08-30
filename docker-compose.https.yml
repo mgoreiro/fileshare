@@ -1,0 +1,68 @@
+# Variante con HTTPS automático (Let's Encrypt) vía Caddy como reverse proxy.
+#
+# Uso:
+#   1. Copia .env.example a .env y define, como mínimo, DOMAIN (tu dominio
+#      apuntando por DNS a la IP de este servidor), ADMIN_USER, ADMIN_PASSWORD
+#      y SESSION_SECRET.
+#   2. Para usar la imagen ya publicada en Docker Hub (recomendado, más rápido
+#      y sin apenas exigir recursos):
+#        docker compose -f docker-compose.https.yml pull
+#        docker compose -f docker-compose.https.yml up -d
+#      Para compilar desde el código de esta carpeta en su lugar:
+#        docker compose -f docker-compose.https.yml up -d --build
+#
+# Con este fichero, el contenedor "fileshare" ya NO publica el puerto 3000
+# directamente: todo el tráfico pasa por Caddy (puertos 80/443), que además
+# redirige automáticamente HTTP -> HTTPS.
+
+services:
+  fileshare:
+    image: mgoreiro/fileshare:latest
+    build: .
+    container_name: fileshare
+    expose:
+      - "3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      - SESSION_SECRET=${SESSION_SECRET:-please_change_this_secret}
+      - BASE_URL=https://${DOMAIN}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-500}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      - SIZE_CHECK_INTERVAL_MINUTES=${SIZE_CHECK_INTERVAL_MINUTES:-60}
+      - COOKIE_SECURE=true
+      # - RESET_ADMIN=true
+    restart: unless-stopped
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: fileshare-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - "DOMAIN=${DOMAIN:?Debes definir DOMAIN en tu fichero .env, por ejemplo ficheros.midominio.com}"
+    depends_on:
+      - fileshare
+    restart: unless-stopped
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  caddy_data:
+  caddy_config:

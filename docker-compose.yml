@@ -1,0 +1,30 @@
+services:
+  fileshare:
+    # Imagen ya publicada en Docker Hub (multi-arquitectura: amd64/arm64/armv7).
+    # - "docker compose pull && docker compose up -d"   -> descarga la imagen ya
+    #   compilada, sin compilar nada en este equipo (recomendado, más rápido y
+    #   sin exigir apenas recursos, ideal para dispositivos ARM justos de RAM).
+    # - "docker compose up -d --build"                  -> ignora la imagen de
+    #   Docker Hub y compila desde el código fuente de esta misma carpeta (útil
+    #   si has modificado el código y quieres probar tus cambios).
+    image: mgoreiro/fileshare:latest
+    build: .
+    container_name: fileshare
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme}
+      - SESSION_SECRET=${SESSION_SECRET:-please_change_this_secret}
+      - BASE_URL=${BASE_URL:-http://localhost:3000}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-500}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      - SIZE_CHECK_INTERVAL_MINUTES=${SIZE_CHECK_INTERVAL_MINUTES:-60}
+      # - RESET_ADMIN=true   # descomentar una vez para forzar el cambio de usuario/contraseña
+    restart: unless-stopped

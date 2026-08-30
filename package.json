@@ -1,0 +1,26 @@
+{
+  "name": "fileshare",
+  "version": "1.0.0",
+  "description": "Sistema de almacenamiento y compartición de ficheros con panel de administración",
+  "main": "server.js",
+  "license": "MIT",
+  "author": {
+    "name": "Miguel González Oreiro",
+    "email": "mgoreiro@gmail.com",
+    "url": "https://github.com/mgoreiro"
+  },
+  "homepage": "https://github.com/mgoreiro",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "multer": "^2.0.0",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^9.0.1",
+    "dotenv": "^16.4.5",
+    "chokidar": "^3.6.0",
+    "mime-types": "^2.1.35"
+  }
+}

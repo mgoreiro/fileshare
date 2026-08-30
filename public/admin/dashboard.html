@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel de administración · FileShare</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-hover: #263449;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --error: #f87171;
+    --success: #34d399;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 1.2rem; margin: 0; }
+  header .user-info { color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 14px; }
+  button.logout {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  button.logout:hover { background: var(--card); }
+
+  main { max-width: 960px; margin: 0 auto; padding: 32px; }
+
+  .upload-box {
+    background: var(--card);
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    text-align: center;
+    margin-bottom: 32px;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .upload-box.dragover {
+    border-color: var(--accent);
+    background: var(--card-hover);
+  }
+  .upload-box p { margin: 0 0 16px; color: var(--muted); }
+  .upload-box input[type="file"] { display: none; }
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+  .btn:hover { background: var(--accent-hover); }
+
+  #progressWrap { margin-top: 16px; display: none; }
+  #progressBar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #progressBar > div {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.1s ease;
+  }
+  #uploadMsg { font-size: 0.85rem; margin-top: 8px; min-height: 1.2em; }
+  #uploadMsg.error { color: var(--error); }
+  #uploadMsg.success { color: var(--success); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .link-btn, .del-btn, .downloads-btn {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  .link-btn:hover { background: var(--accent); border-color: var(--accent); }
+  .downloads-btn:hover { background: var(--success); border-color: var(--success); color: #0f172a; }
+  .del-btn:hover { background: var(--error); border-color: var(--error); color: #1e1e1e; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .size { color: var(--muted); }
+  .badge-watch {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    font-size: 0.7rem;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .badge-telegram {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--success);
+  }
+
+  /* Modal de historial de descargas */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 480px;
+    width: 100%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-box h2 {
+    font-size: 1.05rem;
+    margin: 0 0 4px;
+  }
+  .modal-box .modal-subtitle {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin: 0 0 16px;
+  }
+  .modal-close {
+    align-self: flex-end;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    margin-bottom: -8px;
+  }
+  .modal-close:hover { color: var(--text); }
+  .downloads-list {
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+  }
+  .downloads-list .entry {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .downloads-list .entry .ip { color: var(--text); font-family: monospace; }
+  .downloads-list .entry .date { color: var(--muted); }
+  .downloads-empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <div class="modal-overlay" id="downloadsModal">
+    <div class="modal-box">
+      <button class="modal-close" id="closeModalBtn" aria-label="Cerrar">&times;</button>
+      <h2 id="modalFileName"></h2>
+      <p class="modal-subtitle" id="modalSubtitle"></p>
+      <div class="downloads-list" id="downloadsList"></div>
+    </div>
+  </div>
+  <header>
+    <h1>📁 FileShare · Administración</h1>
+    <div class="user-info">
+      <span id="username"></span>
+      <button class="logout" id="logoutBtn">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="upload-box" id="uploadBox">
+      <p>Arrastra un fichero aquí o haz clic para seleccionarlo</p>
+      <label class="btn" for="fileInput">Seleccionar fichero</label>
+      <input type="file" id="fileInput" />
+      <div id="progressWrap">
+        <div id="progressBar"><div></div></div>
+      </div>
+      <div id="uploadMsg"></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Fichero</th>
+          <th>Tamaño</th>
+          <th>Subido</th>
+          <th>Descargas</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="fileTableBody"></tbody>
+    </table>
+    <div class="empty" id="emptyState" style="display:none;">Todavía no hay ficheros subidos.</div>
+  </main>
+
+  <script>
+    const uploadBox = document.getElementById('uploadBox');
+    const fileInput = document.getElementById('fileInput');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar = progressWrap.querySelector('div > div');
+    const uploadMsg = document.getElementById('uploadMsg');
+    const fileTableBody = document.getElementById('fileTableBody');
+    const emptyState = document.getElementById('emptyState');
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+    }
+
+    function formatDate(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    }
+
+    async function loadMe() {
+      const res = await fetch('/admin/api/me');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      document.getElementById('username').textContent = data.username;
+    }
+
+    async function loadFiles() {
+      const res = await fetch('/admin/api/files');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      fileTableBody.innerHTML = '';
+      if (data.files.length === 0) {
+        emptyState.style.display = 'block';
+        return;
+      }
+      emptyState.style.display = 'none';
+      for (const f of data.files) {
+        const tr = document.createElement('tr');
+        let badge = '';
+        if (f.source === 'watch') badge = '<span class="badge-watch">📁 carpeta</span>';
+        else if (f.source === 'telegram') badge = '<span class="badge-watch badge-telegram">🤖 telegram</span>';
+        tr.innerHTML = `
+          <td>${escapeHtml(f.originalName)}${badge}</td>
+          <td class="size">${formatBytes(f.size)}</td>
+          <td>${formatDate(f.uploadedAt)}</td>
+          <td>${f.downloads}</td>
+          <td class="actions">
+            <button class="link-btn" data-link="${f.link}">Copiar enlace</button>
+            <button class="downloads-btn" data-id="${f.id}" data-name="${escapeHtml(f.originalName)}">Descargas</button>
+            <button class="del-btn" data-id="${f.id}">Eliminar</button>
+          </td>
+        `;
+        fileTableBody.appendChild(tr);
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // navigator.clipboard solo está disponible en contextos seguros (HTTPS o localhost).
+    // Si el panel se sirve por http:// en una IP/dominio, hay que usar un método alternativo.
+    async function copyToClipboard(text) {
+      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (err) {
+          // sigue al método alternativo
+        }
+      }
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        if (ok) return true;
+      } catch (err) {
+        // sigue al último recurso
+      }
+      // Último recurso: mostrar el enlace para copiarlo a mano
+      window.prompt('Copia el enlace manualmente (Ctrl/Cmd+C):', text);
+      return false;
+    }
+
+    fileTableBody.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('link-btn')) {
+        const link = e.target.dataset.link;
+        const copied = await copyToClipboard(link);
+        if (!copied) return; // el prompt ya mostró el enlace, no hace falta el aviso "¡Copiado!"
+        const original = e.target.textContent;
+        e.target.textContent = '¡Copiado!';
+        setTimeout(() => (e.target.textContent = original), 1200);
+      }
+      if (e.target.classList.contains('del-btn')) {
+        if (!confirm('¿Eliminar este fichero? Esta acción no se puede deshacer.')) return;
+        const id = e.target.dataset.id;
+        const res = await fetch(`/admin/api/files/${id}`, { method: 'DELETE' });
+        if (res.ok) loadFiles();
+      }
+      if (e.target.classList.contains('downloads-btn')) {
+        openDownloadsModal(e.target.dataset.id, e.target.dataset.name);
+      }
+    });
+
+    const downloadsModal = document.getElementById('downloadsModal');
+    const modalFileName = document.getElementById('modalFileName');
+    const modalSubtitle = document.getElementById('modalSubtitle');
+    const downloadsList = document.getElementById('downloadsList');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+
+    async function openDownloadsModal(fileId, fileName) {
+      modalFileName.textContent = fileName;
+      modalSubtitle.textContent = 'Cargando…';
+      downloadsList.innerHTML = '';
+      downloadsModal.classList.add('open');
+
+      try {
+        const res = await fetch(`/admin/api/files/${fileId}/downloads`);
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        if (!res.ok) throw new Error('No se pudo cargar el historial.');
+        const data = await res.json();
+
+        if (data.history.length === 0) {
+          modalSubtitle.textContent = 'Sin descargas todavía.';
+          downloadsList.innerHTML = '<div class="downloads-empty">Este fichero no se ha descargado todavía.</div>';
+          return;
+        }
+
+        modalSubtitle.textContent = `${data.downloads} descarga${data.downloads === 1 ? '' : 's'} en total`;
+        downloadsList.innerHTML = data.history
+          .map(
+            (h) => `
+              <div class="entry">
+                <span class="ip">${escapeHtml(h.ip)}</span>
+                <span class="date">${formatDate(h.timestamp)}</span>
+              </div>
+            `
+          )
+          .join('');
+      } catch (err) {
+        modalSubtitle.textContent = '';
+        downloadsList.innerHTML = '<div class="downloads-empty">Error al cargar el historial de descargas.</div>';
+      }
+    }
+
+    function closeDownloadsModal() {
+      downloadsModal.classList.remove('open');
+    }
+
+    closeModalBtn.addEventListener('click', closeDownloadsModal);
+    downloadsModal.addEventListener('click', (e) => {
+      if (e.target === downloadsModal) closeDownloadsModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && downloadsModal.classList.contains('open')) closeDownloadsModal();
+    });
+
+    function uploadFile(file) {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('file', file);
+
+      progressWrap.style.display = 'block';
+      progressBar.style.width = '0%';
+      uploadMsg.textContent = '';
+      uploadMsg.className = '';
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = pct + '%';
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        progressWrap.style.display = 'none';
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            uploadMsg.textContent = 'Fichero subido correctamente.';
+            uploadMsg.className = 'success';
+            loadFiles();
+          } else {
+            uploadMsg.textContent = data.error || 'Error al subir el fichero.';
+            uploadMsg.className = 'error';
+          }
+        } catch (err) {
+          uploadMsg.textContent = 'Error al subir el fichero.';
+          uploadMsg.className = 'error';
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        progressWrap.style.display = 'none';
+        uploadMsg.textContent = 'Error de conexión durante la subida. Si el fichero es muy grande, comprueba también el espacio disponible en el servidor.';
+        uploadMsg.className = 'error';
+      });
+
+      xhr.addEventListener('abort', () => {
+        progressWrap.style.display = 'none';
+        uploadMsg.textContent = 'La subida se ha cancelado.';
+        uploadMsg.className = 'error';
+      });
+
+      xhr.addEventListener('timeout', () => {
+        progressWrap.style.display = 'none';
+        uploadMsg.textContent = 'La subida ha tardado demasiado y se ha agotado el tiempo de espera.';
+        uploadMsg.className = 'error';
+      });
+
+      xhr.timeout = 0; // sin límite de tiempo en el navegador para ficheros grandes
+      xhr.open('POST', '/admin/api/upload');
+      xhr.send(formData);
+    }
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) uploadFile(fileInput.files[0]);
+    });
+
+    uploadBox.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadBox.classList.add('dragover');
+    });
+    uploadBox.addEventListener('dragleave', () => uploadBox.classList.remove('dragover'));
+    uploadBox.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadBox.classList.remove('dragover');
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await fetch('/logout', { method: 'POST' });
+      window.location.href = '/login';
+    });
+
+    loadMe();
+    loadFiles();
+  </script>
+</body>
+</html>
