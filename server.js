@@ -578,7 +578,10 @@ async function handleDocumentMessage(message) {
     const link = `${BASE_URL}/d/${id}`;
     await telegramSendMessage(
       chatId,
-      `✅ Fichero subido: "${originalName}" (${formatBytesForTelegram(stats.size)})\n${link}`
+      `✅ Fichero subido: "${originalName}" (${formatBytesForTelegram(stats.size)})\n${link}`,
+      // Sin esto, Telegram genera una vista previa del enlace haciendo un GET a /d/:id
+      // desde sus propios servidores, lo que cuenta como una descarga real justo tras subir.
+      { disable_web_page_preview: true }
     );
     console.log(`[telegram] Fichero subido vía bot: "${originalName}" (${id})`);
   } catch (err) {
