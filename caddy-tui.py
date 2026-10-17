@@ -7,8 +7,8 @@ cualquier sitio; trabaja siempre sobre la carpeta donde está este fichero:
 
     ./caddy-tui.py
 
-Permite: ver el estado, añadir servicios con un asistente, monitorizar el
-tráfico en vivo, editar el Caddyfile (con validación previa y copia de
+Permite: ver el estado, diagnosticar y reparar problemas habituales, añadir
+servicios con un asistente, monitorizar el tráfico en vivo, editar el Caddyfile (con validación previa y copia de
 seguridad), validar, formatear, arrancar, parar, reiniciar, recargar la
 configuración en caliente, ver logs y restaurar copias anteriores.
 
@@ -47,6 +47,7 @@ CONF_IN_CONTAINER = "/etc/caddy/Caddyfile"
 MENU = [
     ("a", "Añadir servicio (asistente)"),
     ("t", "Monitor de tráfico"),
+    ("d", "Diagnóstico y reparación"),
     ("e", "Editar Caddyfile"),
     ("v", "Validar configuración"),
     ("l", "Recargar (sin cortes)"),
@@ -283,6 +284,128 @@ class TrafficFeed:
             pass
 
 
+# ----------------------------------------------------------- diagnóstico ---
+def parse_upstreams(text):
+    """(host, puerto, https) de cada destino de reverse_proxy del Caddyfile."""
+    ups = []
+    for line in text.splitlines():
+        m = re.match(r"\s*reverse_proxy\s+([^{#]+)", line)
+        if not m:
+            continue
+        for tok in m.group(1).split():
+            if tok[0] in "/*@{":
+                continue
+            https = tok.startswith("https://")
+            t = re.sub(r"^https?://", "", tok).split("/")[0]
+            if "{" in t or not t:
+                continue
+            host, _, port = t.partition(":")
+            up = (host, port or ("443" if https else "80"), https)
+            if up not in ups:
+                ups.append(up)
+    return ups
+
+
+def site_ports(text):
+    """Puertos en los que Caddy debe escuchar según el Caddyfile."""
+    ports = {80, 443}
+    for a in site_addresses(text):
+        m = re.search(r":(\d+)$", a)
+        if m:
+            ports.add(int(m.group(1)))
+    return sorted(ports)
+
+
+def find_networks(host):
+    """Redes Docker en las que vive el contenedor (o alias) llamado `host`."""
+    rc, ids = run(["docker", "ps", "-q"], timeout=15)
+    if rc != 0 or not ids.split():
+        return []
+    fmt = "{{.Name}}|{{range $k,$v := .NetworkSettings.Networks}}{{$k}}={{range $v.Aliases}}{{.}},{{end}};{{end}}"
+    rc, out = run(["docker", "inspect", "--format", fmt] + ids.split(), timeout=20)
+    found = []
+    for line in out.splitlines():
+        name, _, nets = line.partition("|")
+        for ent in nets.split(";"):
+            net, _, al = ent.partition("=")
+            if net and net not in ("bridge", "host", "none") and (
+                    host == name.lstrip("/") or host in al.split(",")):
+                found.append(net)
+    return sorted(set(found))
+
+
+def _norm_item(line):
+    t = line.strip()
+    return t[1:].strip().strip("\"'") if t.startswith("-") else None
+
+
+def _add_list_items(lines, s, e, key, items):
+    """Añade elementos a la lista `key:` del servicio (líneas s..e). Devuelve nuevo e."""
+    k = next((i for i in range(s + 1, e) if re.match(rf"^    {key}:\s*$", lines[i])), None)
+    if k is None:
+        new = [f"    {key}:"] + [f'      - "{i}"' if key == "ports" else f"      - {i}" for i in items]
+        lines[e:e] = new
+        return e + len(new)
+    last = k
+    for j in range(k + 1, e):
+        if lines[j].startswith("      - "):
+            last = j
+        elif lines[j].strip() and not lines[j].startswith("      "):
+            break
+    have = {_norm_item(l) for l in lines[k + 1:last + 1]}
+    new = [f'      - "{i}"' if key == "ports" else f"      - {i}" for i in items if i.strip('"') not in have]
+    lines[last + 1:last + 1] = new
+    return e + len(new)
+
+
+def patch_compose(text, service, ports=(), extra_hosts=(), networks=()):
+    """Añade puertos / extra_hosts / redes externas al servicio del compose."""
+    lines = text.split("\n")
+    s = next((i for i, l in enumerate(lines)
+              if re.match(rf"^  {re.escape(service)}:\s*(#.*)?$", l)), None)
+    if s is None:
+        raise ValueError(f"No se encuentra el servicio '{service}' en {COMPOSE}")
+    e = s + 1
+    while e < len(lines) and (not lines[e].strip() or lines[e].startswith("   ")):
+        e += 1
+    while e > s + 1 and not lines[e - 1].strip():
+        e -= 1
+    if ports:
+        e = _add_list_items(lines, s, e, "ports", [f"{p}:{p}" for p in ports])
+    if extra_hosts:
+        e = _add_list_items(lines, s, e, "extra_hosts", [f'"{h}"' for h in extra_hosts])
+    if networks:
+        has_key = any(re.match(r"^    networks:\s*$", lines[i]) for i in range(s + 1, e))
+        e = _add_list_items(lines, s, e, "networks", ([] if has_key else ["default"]) + list(networks))
+        t = next((i for i, l in enumerate(lines) if re.match(r"^networks:\s*$", l)), None)
+        if t is None:
+            lines += ["", "networks:"]
+            t = len(lines) - 1
+        te = t + 1
+        while te < len(lines) and (not lines[te].strip() or lines[te].startswith(" ")):
+            te += 1
+        while te > t + 1 and not lines[te - 1].strip():
+            te -= 1
+        for net in networks:
+            if not any(re.match(rf"^  {re.escape(net)}:", l) for l in lines[t + 1:te]):
+                lines[te:te] = [f"  {net}:", "    external: true"]
+                te += 2
+    return "\n".join(lines)
+
+
+def compose_snippet(need):
+    out = ["    # en el servicio '%s':" % SERVICE]
+    if need["ports"]:
+        out += ["    ports:"] + [f'      - "{p}:{p}"' for p in need["ports"]]
+    if need["hosts"]:
+        out += ["    extra_hosts:"] + [f'      - "{h}"' for h in need["hosts"]]
+    if need["nets"]:
+        out += ["    networks:", "      - internal"] + [f"      - {n}" for n in need["nets"]]
+        out += ["", "# y al final del fichero:", "networks:"]
+        out += [f"  {n}:\n    external: true" for n in need["nets"]]
+    return "\n".join(out)
+
+
 # --------------------------------------------------------------------- UI ----
 class App:
     def __init__(self, scr):
@@ -349,9 +472,11 @@ class App:
         for i, line in enumerate(self.out[self.scroll : self.scroll + avail]):
             attr = 0
             low = line.lower()
-            if "error" in low or "fail" in low or "inválid" in low:
+            if line.startswith("✘") or "error" in low or "fail" in low or "inválid" in low:
                 attr = curses.color_pair(2)
-            elif "valid configuration" in low or low.startswith("✔"):
+            elif line.startswith("⚠"):
+                attr = curses.color_pair(3)
+            elif "valid configuration" in low or line.startswith("✔"):
                 attr = curses.color_pair(1)
             scr.addstr(oy + 1 + i, 1, line[: w - 2].replace("\t", "    "), attr)
         hint = "↑/↓ PgUp/PgDn desplazar salida"
@@ -787,6 +912,172 @@ class App:
         scr.addstr(h - 1, 0, foot[: w - 1], curses.A_DIM)
         scr.refresh()
 
+    # -- diagnóstico y reparación
+    def diagnose(self):
+        """Ejecuta las comprobaciones. Devuelve (líneas, arreglos, necesidades)."""
+        L, fixes = [], set()
+        need = {"ports": [], "hosts": [], "nets": []}
+
+        def add(level, title, *detail):
+            L.append({"ok": "✔", "warn": "⚠", "err": "✘"}[level] + " " + title)
+            L.extend("    " + d for d in detail if d)
+
+        rc, out = run(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=20)
+        if rc != 0:
+            add("err", "Docker no responde", out.splitlines()[-1] if out else "",
+                "Solución: arranca Docker (systemctl start docker) y comprueba que tu usuario puede usarlo.")
+            return L, fixes, need
+        add("ok", f"Docker disponible (v{out.strip()})")
+
+        if read_env("DOMAIN"):
+            add("ok", f"DOMAIN definido en .env ({read_env('DOMAIN')})")
+        else:
+            add("err", "DOMAIN no está definido en .env",
+                "Solución: pulsa [n], define DOMAIN=tu.dominio.com y luego [s] para aplicarlo.")
+
+        with open(CADDYFILE, encoding="utf-8") as f:
+            text = f.read()
+        ok, out = validate_text(text)
+        if ok:
+            add("ok", "El Caddyfile es válido")
+        else:
+            tail = out.splitlines()[-1] if out else ""
+            hint = "Solución: edítalo con [e] (la TUI no te dejará guardar algo inválido)."
+            if "File to import not found" in out:
+                hint = ("Solución: 'import nombre' necesita un snippet '(nombre) { ... }' definido al "
+                        "principio del Caddyfile, o un fichero con ese nombre junto a él.")
+            add("err", "El Caddyfile NO es válido", tail, hint)
+
+        state, _ = container_state()
+        if state != "running":
+            add("err", f"El contenedor {CONTAINER} no está en marcha (estado: {state})",
+                "Solución: arrancarlo (se ofrece abajo) o con [s].")
+            fixes.add("start")
+            return L, fixes, need
+        add("ok", f"Contenedor {CONTAINER} en marcha")
+
+        rc, live = run(["docker", "exec", CONTAINER, "cat", CONF_IN_CONTAINER], timeout=15)
+        if rc == 0 and live.strip() != text.strip():
+            add("err", "El contenedor usa un Caddyfile DISTINTO al del disco",
+                "Causa típica: un editor sustituyó el fichero y Docker sigue montando el antiguo.",
+                "Solución: recrear el contenedor (se ofrece abajo). ¡Hasta entonces los cambios no se aplican!")
+            fixes.add("recreate")
+        elif rc == 0:
+            add("ok", "El contenedor ve el mismo Caddyfile que el disco")
+
+        rc, js = run(["docker", "inspect", "--format", "{{json .HostConfig.PortBindings}}|{{json .HostConfig.ExtraHosts}}",
+                      CONTAINER], timeout=15)
+        pb, eh = {}, []
+        try:
+            a, _, b = js.partition("|")
+            pb, eh = json.loads(a) or {}, json.loads(b) or []
+        except ValueError:
+            pass
+        published = {int(k.split("/")[0]) for k, v in pb.items() if v}
+        missing = [p for p in site_ports(text) if p not in published]
+        if missing:
+            add("err", "Puertos del Caddyfile sin publicar en el contenedor: " + ", ".join(map(str, missing)),
+                "Desde fuera no se podrá acceder a esos sitios.",
+                f"Solución: añadirlos a 'ports' del servicio '{SERVICE}' en {COMPOSE} (se ofrece abajo).")
+            need["ports"] = missing
+            fixes.add("compose")
+        else:
+            add("ok", "Todos los puertos del Caddyfile están publicados (" + ", ".join(map(str, site_ports(text))) + ")")
+
+        for host, port, https in parse_upstreams(text):
+            url = f"{'https' if https else 'http'}://{host}:{port}"
+            cmd = ["docker", "exec", CONTAINER, "wget", "-S", "--spider", "-q", "-T", "4"]
+            rc, out = run(cmd + (["--no-check-certificate"] if https else []) + [url], timeout=20)
+            low = out.lower()
+            if "http/" in low:
+                add("ok", f"Destino {host}:{port} responde")
+            elif host == "host.docker.internal" and not any("host.docker.internal" in h for h in eh):
+                add("err", "host.docker.internal no está configurado en el contenedor",
+                    "Solución: añadir extra_hosts 'host.docker.internal:host-gateway' (se ofrece abajo).")
+                need["hosts"] = ["host.docker.internal:host-gateway"]
+                fixes.add("compose")
+            elif "bad address" in low or "not found" in low or "resolve" in low:
+                nets = [n for n in find_networks(host)]
+                msg = [f"Solución: conectar Caddy a la red de '{host}'."]
+                if nets:
+                    msg = [f"'{host}' está en la red Docker: {', '.join(nets)}",
+                           f"Solución: añadir esa red a '{SERVICE}' en {COMPOSE} como externa (se ofrece abajo)."]
+                    need["nets"] = sorted(set(need["nets"]) | set(nets))
+                    fixes.add("compose")
+                else:
+                    msg.append("No he encontrado ningún contenedor en marcha con ese nombre: ¿está parado?")
+                add("err", f"Caddy no resuelve el destino '{host}' (red distinta)", *msg)
+            elif "refused" in low:
+                add("warn", f"{host}:{port} rechaza la conexión", "El servicio no está escuchando: ¿está parado o es otro puerto?")
+            else:
+                add("warn", f"{host}:{port} no responde (timeout)", "Revisa que el servicio esté arrancado y el cortafuegos.")
+
+        rc, logs = run(["docker", "logs", "--since", "10m", CONTAINER], timeout=20)
+        errs = Counter()
+        for line in logs.splitlines():
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            if j.get("level") == "error" and not str(j.get("logger", "")).startswith("http.log.access"):
+                errs[str(j.get("msg", ""))[:110]] += 1
+        if errs:
+            add("warn", f"{sum(errs.values())} errores en los logs de los últimos 10 min",
+                *[f"{n}× {m}" for m, n in errs.most_common(3)])
+        else:
+            add("ok", "Sin errores en los logs de los últimos 10 min")
+        return L, fixes, need
+
+    def act_diagnose(self):
+        self.busy("Ejecutando comprobaciones (puede tardar unos segundos)...")
+        L, fixes, need = self.diagnose()
+        problems = sum(1 for l in L if l.startswith("✘"))
+        warns = sum(1 for l in L if l.startswith("⚠"))
+        L.append("")
+        L.append(f"Resultado: {problems} problema(s), {warns} aviso(s)." if problems or warns
+                 else "✔ Todo correcto.")
+        self.show("Diagnóstico", "\n".join(L))
+        if not fixes:
+            return
+        self.draw()
+        recreate = "recreate" in fixes
+        if "start" in fixes and self.ask("¿Arrancar el contenedor de Caddy?", True):
+            self.act_start()
+            return
+        if "compose" in fixes and self.ask(f"¿Actualizar {COMPOSE} con los cambios necesarios?", True):
+            try:
+                path = os.path.join(BASE, COMPOSE)
+                with open(path, encoding="utf-8") as f:
+                    old = f.read()
+                new = patch_compose(old, SERVICE, need["ports"], need["hosts"], need["nets"])
+                cand = os.path.join(BASE, f".compose.candidate.{os.getpid()}.yml")
+                with open(cand, "w", encoding="utf-8") as f:
+                    f.write(new)
+                try:
+                    rc, out = run(["docker", "compose", "-f", cand, "config", "-q"], timeout=30)
+                finally:
+                    os.unlink(cand)
+                if rc != 0:
+                    raise ValueError("El compose resultante no es válido:\n" + out)
+                os.makedirs(BACKUPS, exist_ok=True)
+                bk = os.path.join(BACKUPS, COMPOSE + "." + datetime.now().strftime("%Y%m%d-%H%M%S"))
+                shutil.copy2(path, bk)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(new)
+                self.show("Compose actualizado", f"✔ {COMPOSE} actualizado (copia: {os.path.relpath(bk, BASE)}).")
+                recreate = True
+            except (OSError, ValueError) as e:
+                self.show("No se pudo actualizar el compose automáticamente",
+                          f"{e}\n\nAñade a mano esto en {COMPOSE}:\n\n{compose_snippet(need)}")
+                return
+            self.draw()
+        if recreate and self.ask("¿Recrear el contenedor de Caddy para aplicar los cambios?", True):
+            self.act_compose("Recrear", "up", "-d", "--force-recreate", "--no-deps", SERVICE)
+            self.draw()
+            if self.ask("¿Volver a ejecutar el diagnóstico?", True):
+                time.sleep(3)
+                self.act_diagnose()
+
     def act_env(self):
         if not os.path.exists(ENVFILE):
             if not self.ask("No existe .env. ¿Crearlo desde .env.example?"):
@@ -798,7 +1089,7 @@ class App:
     # -- bucle
     def loop(self):
         actions = {
-            "a": self.act_add, "t": self.act_traffic, "e": self.act_edit, "v": self.act_validate, "l": self.act_reload,
+            "a": self.act_add, "t": self.act_traffic, "d": self.act_diagnose, "e": self.act_edit, "v": self.act_validate, "l": self.act_reload,
             "s": self.act_start, "g": self.act_logs, "f": self.act_format,
             "c": self.act_view, "b": self.act_restore, "k": self.act_backup, "n": self.act_env,
             "x": lambda: self.act_compose("Parar", "stop", SERVICE, confirm="¿Parar Caddy? El sitio dejará de servirse por HTTPS."),

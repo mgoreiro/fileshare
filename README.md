@@ -205,6 +205,7 @@ dependencias) para administrar el contenedor de Caddy:
 |-------|--------|
 | `a` | **Asistente para añadir un servicio**: formulario (dominio, destino `host:puerto`, HTTPS al destino, gzip, cabeceras de seguridad, log de acceso, usuario/contraseña opcional). Genera el bloque, lo valida, muestra una vista previa y lo añade al `Caddyfile` |
 | `t` | **Monitor de tráfico** en vivo: peticiones/s, códigos 2xx–5xx, latencia, gráfica, top dominios e IPs y últimas peticiones (`p` pausa, `w` cambia la ventana 1/5/15 min). Requiere la directiva `log` en el sitio, ya incluida en el `Caddyfile` y en los servicios creados con el asistente |
+| `d` | **Diagnóstico y reparación**: comprueba Docker, `DOMAIN`, validez del Caddyfile, que el contenedor use el mismo Caddyfile que el disco, que estén publicados todos los puertos de los sitios, que Caddy alcance cada destino (redes Docker, `host.docker.internal`) y los errores recientes de los logs. Para cada problema explica la solución y se ofrece aplicarla: actualiza el `docker-compose` (puertos, `extra_hosts`, redes externas; con copia y validación) y recrea el contenedor |
 | `e` | Editar el `Caddyfile` (se valida antes de guardar; si es inválido puedes seguir editando o descartar; se hace copia en `.caddy-backups/`) |
 | `v` | Validar la configuración |
 | `l` | Recargar en caliente, sin cortes (valida antes) |
