@@ -194,30 +194,19 @@ Encrypt — no hay que ejecutar `certbot` ni renovar nada a mano.
 
 ### Gestionar Caddy desde una TUI
 
-`caddy-tui.py` es una utilidad de terminal (solo Python 3 + Docker, sin
-dependencias) para administrar el contenedor de Caddy:
+La utilidad de terminal para administrar este Caddy (editar el `Caddyfile` con
+validación, recargar sin cortes, añadir servicios con un asistente, monitor de
+tráfico en vivo y diagnóstico guiado) vive ahora en su propio repositorio:
+**[mgoreiro/caddy-tui](https://github.com/mgoreiro/caddy-tui)**. Es un único
+fichero Python sin dependencias; autodetecta el contenedor `fileshare-caddy`:
 
 ```bash
-./caddy-tui.py
+curl -fsSLO https://raw.githubusercontent.com/mgoreiro/caddy-tui/main/caddy-tui.py
+chmod +x caddy-tui.py && ./caddy-tui.py
 ```
 
-| Tecla | Acción |
-|-------|--------|
-| `a` | **Asistente para añadir un servicio**: formulario (dominio, destino `host:puerto`, HTTPS al destino, gzip, cabeceras de seguridad, log de acceso, usuario/contraseña opcional). Genera el bloque, lo valida, muestra una vista previa y lo añade al `Caddyfile` |
-| `t` | **Monitor de tráfico** en vivo: peticiones/s, códigos 2xx–5xx, latencia, gráfica, top dominios e IPs y últimas peticiones (`p` pausa, `w` cambia la ventana 1/5/15 min). Requiere la directiva `log` en el sitio, ya incluida en el `Caddyfile` y en los servicios creados con el asistente |
-| `d` | **Diagnóstico y reparación**: comprueba Docker, `DOMAIN`, validez del Caddyfile, que el contenedor use el mismo Caddyfile que el disco, que estén publicados todos los puertos de los sitios, que Caddy alcance cada destino (redes Docker, `host.docker.internal`) y los errores recientes de los logs. Para cada problema explica la solución y se ofrece aplicarla: actualiza el `docker-compose` (puertos, `extra_hosts`, redes externas; con copia y validación) y recrea el contenedor |
-| `e` | Editar el `Caddyfile` (se valida antes de guardar; si es inválido puedes seguir editando o descartar; se hace copia en `.caddy-backups/`) |
-| `v` | Validar la configuración |
-| `l` | Recargar en caliente, sin cortes (valida antes) |
-| `s` / `x` / `r` | Arrancar (o aplicar cambios de `.env`) / parar / reiniciar |
-| `g` | Ver logs |
-| `f` | Formatear el `Caddyfile` |
-| `k` | Crear un backup completo (`Caddyfile` + `.env`) en `.caddy-backups/*.tar.gz` |
-| `b` | Restaurar un backup (completo o copia automática del Caddyfile) |
-| `n` | Editar `.env` (p. ej. `DOMAIN`) |
-
-Usa `$EDITOR` (por defecto `nano` o `vi`). Nombres de contenedor/servicio
-configurables con `CADDY_CONTAINER`, `CADDY_SERVICE` y `CADDY_COMPOSE`.
+Para que el monitor de tráfico funcione, el sitio debe tener la directiva `log`
+(ya incluida en el `Caddyfile` de este proyecto).
 
 ## Construcción de la imagen para ARM (Raspberry Pi, etc.)
 

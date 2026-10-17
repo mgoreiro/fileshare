@@ -14,7 +14,7 @@
 	reverse_proxy fileshare:3000
 	encode gzip
 
-	# Registro de accesos (lo usa el monitor de tráfico de caddy-tui.py)
+	# Registro de accesos (lo usa el monitor de tráfico de caddy-tui)
 	log
 
 	# Cabeceras de seguridad básicas
