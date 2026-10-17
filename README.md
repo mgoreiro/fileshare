@@ -192,6 +192,30 @@ Encrypt — no hay que ejecutar `certbot` ni renovar nada a mano.
 - El `docker-compose.yml` original (HTTP simple, sin Caddy) sigue disponible
   tal cual para uso en red local o detrás de tu propio reverse proxy/VPN.
 
+### Gestionar Caddy desde una TUI
+
+`caddy-tui.py` es una utilidad de terminal (solo Python 3 + Docker, sin
+dependencias) para administrar el contenedor de Caddy:
+
+```bash
+./caddy-tui.py
+```
+
+| Tecla | Acción |
+|-------|--------|
+| `e` | Editar el `Caddyfile` (se valida antes de guardar; si es inválido puedes seguir editando o descartar; se hace copia en `.caddy-backups/`) |
+| `v` | Validar la configuración |
+| `l` | Recargar en caliente, sin cortes (valida antes) |
+| `s` / `x` / `r` | Arrancar (o aplicar cambios de `.env`) / parar / reiniciar |
+| `g` | Ver logs |
+| `f` | Formatear el `Caddyfile` |
+| `k` | Crear un backup completo (`Caddyfile` + `.env`) en `.caddy-backups/*.tar.gz` |
+| `b` | Restaurar un backup (completo o copia automática del Caddyfile) |
+| `n` | Editar `.env` (p. ej. `DOMAIN`) |
+
+Usa `$EDITOR` (por defecto `nano` o `vi`). Nombres de contenedor/servicio
+configurables con `CADDY_CONTAINER`, `CADDY_SERVICE` y `CADDY_COMPOSE`.
+
 ## Construcción de la imagen para ARM (Raspberry Pi, etc.)
 
 Si vas a desplegar directamente en un dispositivo ARM, `docker compose up
