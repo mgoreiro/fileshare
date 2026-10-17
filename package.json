@@ -1,6 +1,6 @@
 {
   "name": "fileshare",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Sistema de almacenamiento y compartición de ficheros con panel de administración",
   "main": "server.js",
   "license": "MIT",
