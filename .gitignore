@@ -3,3 +3,4 @@ data
 .env
 *.log
 .caddy-backups
+__pycache__

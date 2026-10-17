@@ -203,6 +203,8 @@ dependencias) para administrar el contenedor de Caddy:
 
 | Tecla | Acción |
 |-------|--------|
+| `a` | **Asistente para añadir un servicio**: formulario (dominio, destino `host:puerto`, HTTPS al destino, gzip, cabeceras de seguridad, log de acceso, usuario/contraseña opcional). Genera el bloque, lo valida, muestra una vista previa y lo añade al `Caddyfile` |
+| `t` | **Monitor de tráfico** en vivo: peticiones/s, códigos 2xx–5xx, latencia, gráfica, top dominios e IPs y últimas peticiones (`p` pausa, `w` cambia la ventana 1/5/15 min). Requiere la directiva `log` en el sitio, ya incluida en el `Caddyfile` y en los servicios creados con el asistente |
 | `e` | Editar el `Caddyfile` (se valida antes de guardar; si es inválido puedes seguir editando o descartar; se hace copia en `.caddy-backups/`) |
 | `v` | Validar la configuración |
 | `l` | Recargar en caliente, sin cortes (valida antes) |

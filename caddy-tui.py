@@ -7,7 +7,8 @@ cualquier sitio; trabaja siempre sobre la carpeta donde está este fichero:
 
     ./caddy-tui.py
 
-Permite: ver el estado, editar el Caddyfile (con validación previa y copia de
+Permite: ver el estado, añadir servicios con un asistente, monitorizar el
+tráfico en vivo, editar el Caddyfile (con validación previa y copia de
 seguridad), validar, formatear, arrancar, parar, reiniciar, recargar la
 configuración en caliente, ver logs y restaurar copias anteriores.
 
@@ -21,12 +22,16 @@ Variables de entorno opcionales:
 import curses
 import json
 import os
+import queue
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
+from collections import Counter, deque
 from datetime import datetime, timezone
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +45,8 @@ BACKUPS = os.path.join(BASE, ".caddy-backups")
 CONF_IN_CONTAINER = "/etc/caddy/Caddyfile"
 
 MENU = [
+    ("a", "Añadir servicio (asistente)"),
+    ("t", "Monitor de tráfico"),
     ("e", "Editar Caddyfile"),
     ("v", "Validar configuración"),
     ("l", "Recargar (sin cortes)"),
@@ -157,6 +164,113 @@ def write_in_place(text):
         f.seek(0)
         f.truncate()
         f.write(text)
+
+
+# ------------------------------------------------- servicios (asistente) ---
+HOST_RE = re.compile(r"^(?:https?://)?[A-Za-z0-9*]([A-Za-z0-9.\-*]*[A-Za-z0-9])?(:\d{1,5})?$|^\{\$[A-Z_]+\}$")
+
+
+def site_addresses(text):
+    """Direcciones de los bloques de nivel superior del Caddyfile."""
+    sites, depth = [], 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if depth == 0 and stripped and not stripped.startswith("#") and stripped.endswith("{"):
+            head = stripped[:-1].strip()
+            if head:  # el bloque de opciones globales es "{" a secas
+                sites += [a.strip().rstrip(",") for a in head.split() if a.strip(",")]
+        depth += line.count("{") - line.count("}")
+        depth = max(depth, 0)
+    return sites
+
+
+def hash_password(plain):
+    rc, out = run(["docker", "run", "--rm", "-i", IMAGE, "caddy", "hash-password"],
+                  stdin=plain + "\n", timeout=60)
+    return out.strip() if rc == 0 and out.startswith("$") else None
+
+
+def build_site_block(v, pw_hash=None):
+    upstream = v["upstream"].strip()
+    if v["https_upstream"] and "://" not in upstream:
+        upstream = "https://" + upstream
+    lines = [f"# Servicio añadido con caddy-tui ({datetime.now():%Y-%m-%d %H:%M})",
+             f"{v['host'].strip()} {{"]
+    if v["user"] and pw_hash:
+        lines += ["\tbasic_auth {", f"\t\t{v['user'].strip()} {pw_hash}", "\t}"]
+    if v["https_upstream"] and v["skip_verify"]:
+        lines += [f"\treverse_proxy {upstream} {{", "\t\ttransport http {",
+                  "\t\t\ttls_insecure_skip_verify", "\t\t}", "\t}"]
+    else:
+        lines.append(f"\treverse_proxy {upstream}")
+    if v["gzip"]:
+        lines.append("\tencode gzip")
+    if v["headers"]:
+        lines += ["\theader {",
+                  '\t\tStrict-Transport-Security "max-age=31536000; includeSubDomains"',
+                  '\t\tX-Content-Type-Options "nosniff"',
+                  '\t\tX-Frame-Options "DENY"', "\t}"]
+    if v["log"]:
+        lines.append("\tlog")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+# ------------------------------------------------- monitor de tráfico ------
+SPARK = "▁▂▃▄▅▆▇█"
+
+
+def human_bytes(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+class TrafficFeed:
+    """Lee en segundo plano `docker logs -f` y extrae los accesos HTTP."""
+
+    def __init__(self, preload="15m"):
+        self.events = deque(maxlen=50000)  # (ts, host, método, uri, ip, status, bytes, seg)
+        self.q = queue.Queue()
+        self.alive = True
+        self.proc = subprocess.Popen(
+            ["docker", "logs", "-f", "--since", preload, CONTAINER],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, cwd=BASE,
+        )
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        for line in self.proc.stdout:
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            if not str(j.get("logger", "")).startswith("http.log.access"):
+                continue
+            r = j.get("request", {})
+            self.q.put((
+                float(j.get("ts", time.time())),
+                r.get("host", "-"), r.get("method", "-"), r.get("uri", "-"),
+                r.get("client_ip") or r.get("remote_ip", "-"),
+                int(j.get("status", 0)), int(j.get("size", 0)), float(j.get("duration", 0)),
+            ))
+        self.alive = False
+
+    def drain(self):
+        n = 0
+        while True:
+            try:
+                self.events.append(self.q.get_nowait())
+                n += 1
+            except queue.Empty:
+                return n
+
+    def close(self):
+        try:
+            self.proc.terminate()
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------- UI ----
@@ -433,6 +547,236 @@ class App:
         self.show("Restaurar", f"✔ Restaurado {what} desde {files[i]}.\n"
                   "Usa [l] para recargar el Caddyfile" + (" o [s] para aplicar cambios de .env." if env_text is not None else "."))
 
+    # -- formulario modal (asistentes)
+    def form(self, title, fields, validator):
+        """Formulario a pantalla completa. Devuelve {clave: valor} o None."""
+        vals = {f["key"]: f["value"] for f in fields}
+        nb, sel, err = len(fields), 0, ""
+        self.scr.timeout(-1)
+        try:
+            while True:
+                h, w = self.scr.getmaxyx()
+                self.scr.erase()
+                self.scr.addstr(0, 0, f" {title} ".ljust(w - 1), curses.A_REVERSE)
+                vx = 34
+                for i, f in enumerate(fields):
+                    v, focused = vals[f["key"]], sel == i
+                    if f["kind"] == "bool":
+                        shown = "[x] sí" if v else "[ ] no"
+                    elif f["kind"] == "secret":
+                        shown = "*" * len(v)
+                    else:
+                        shown = v
+                    if focused and f["kind"] != "bool":
+                        shown += "▏"
+                    self.scr.addstr(2 + i, 2, f["label"][: vx - 4])
+                    self.scr.addstr(2 + i, vx, shown[: max(1, w - vx - 2)],
+                                    curses.A_REVERSE if focused else curses.A_UNDERLINE)
+                by = 3 + nb
+                for j, label in enumerate(("[ Aceptar ]", "[ Cancelar ]")):
+                    self.scr.addstr(by, 2 + j * 14, label,
+                                    curses.A_REVERSE if sel == nb + j else curses.A_BOLD)
+                if sel < nb:
+                    self.scr.addstr(by + 2, 2, fields[sel].get("hint", "")[: w - 4], curses.A_DIM)
+                if err:
+                    self.scr.addstr(by + 4, 2, ("✘ " + err)[: w - 4], curses.color_pair(2) | curses.A_BOLD)
+                self.scr.addstr(h - 1, 0,
+                                "Tab/↑↓ moverse · Espacio marca/desmarca · Ctrl+U borra campo · Esc cancela"[: w - 1],
+                                curses.A_DIM)
+                try:
+                    k = self.scr.get_wch()
+                except curses.error:
+                    continue
+                err = ""
+                f = fields[sel] if sel < nb else None
+                if k == "\x1b":
+                    return None
+                if k in (curses.KEY_DOWN, "\t") or (k in ("\n", "\r") and sel < nb):
+                    sel = min(sel + 1, nb + 1)
+                elif k in (curses.KEY_UP, curses.KEY_BTAB):
+                    sel = max(sel - 1, 0)
+                elif sel >= nb and k == curses.KEY_RIGHT:
+                    sel = nb + 1
+                elif sel >= nb and k == curses.KEY_LEFT:
+                    sel = nb
+                elif sel >= nb and k in ("\n", "\r", curses.KEY_ENTER, " "):
+                    if sel == nb + 1:
+                        return None
+                    err = validator(vals) or ""
+                    if not err:
+                        return vals
+                elif f and f["kind"] == "bool" and k in (" ", curses.KEY_LEFT, curses.KEY_RIGHT):
+                    vals[f["key"]] = not vals[f["key"]]
+                elif f and f["kind"] != "bool":
+                    if k in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+                        vals[f["key"]] = vals[f["key"]][:-1]
+                    elif k == "\x15":
+                        vals[f["key"]] = ""
+                    elif isinstance(k, str) and k.isprintable():
+                        vals[f["key"]] += k
+        finally:
+            self.scr.timeout(1000)
+
+    def act_add(self):
+        with open(CADDYFILE, encoding="utf-8") as f:
+            current = f.read()
+        existing = [a.lower() for a in site_addresses(current)]
+        fields = [
+            dict(key="host", label="Dominio del servicio", kind="text", value="",
+                 hint="Ej.: app.midominio.com (debe apuntar por DNS a este servidor)"),
+            dict(key="upstream", label="Destino (host:puerto)", kind="text", value="",
+                 hint="Ej.: 192.168.1.50:8080 · o nombre-contenedor:3000 si está en la red de Caddy"),
+            dict(key="https_upstream", label="El destino usa HTTPS", kind="bool", value=False),
+            dict(key="skip_verify", label="  …ignorar su certificado", kind="bool", value=False,
+                 hint="Solo si el destino usa un certificado autofirmado (reduce la seguridad)"),
+            dict(key="gzip", label="Compresión gzip", kind="bool", value=True),
+            dict(key="headers", label="Cabeceras de seguridad", kind="bool", value=True),
+            dict(key="log", label="Registrar accesos (monitor)", kind="bool", value=True,
+                 hint="Necesario para ver este servicio en el monitor de tráfico"),
+            dict(key="user", label="Usuario (autenticación básica)", kind="text", value="",
+                 hint="Opcional: deja usuario y contraseña vacíos para no pedir login"),
+            dict(key="password", label="Contraseña", kind="secret", value="",
+                 hint="Se guarda cifrada (bcrypt) en el Caddyfile"),
+        ]
+
+        def check(v):
+            host, up = v["host"].strip(), v["upstream"].strip()
+            if not HOST_RE.match(host):
+                return "Dominio no válido"
+            if host.lower() in existing:
+                return "Ya existe un bloque para ese dominio en el Caddyfile"
+            if not up or any(c.isspace() for c in up):
+                return "Indica el destino, p. ej. 192.168.1.50:8080"
+            if bool(v["user"].strip()) != bool(v["password"]):
+                return "Indica usuario y contraseña, o deja ambos vacíos"
+            if any(c.isspace() for c in v["user"].strip()):
+                return "El usuario no puede contener espacios"
+            return None
+
+        v = self.form("Añadir servicio a Caddy", fields, check)
+        if v is None:
+            self.show("Añadir servicio", "Cancelado. No se ha modificado nada.")
+            return
+        self.busy("Generando configuración...")
+        pw = hash_password(v["password"]) if v["user"].strip() else None
+        if v["user"].strip() and not pw:
+            self.show("Añadir servicio: ERROR", "No se pudo cifrar la contraseña (¿Docker disponible?).")
+            return
+        block = build_site_block(v, pw)
+        new = current.rstrip("\n") + "\n\n" + block
+        ok, out = validate_text(new)
+        if not ok:
+            self.show("✘ La configuración generada NO es válida", out + "\n\n" + block)
+            return
+        self.show("Vista previa del bloque (se añadirá al final del Caddyfile)", block)
+        self.draw()
+        if not self.ask("¿Guardar en el Caddyfile?", True):
+            self.show("Añadir servicio", "Cancelado. No se ha modificado nada.")
+            return
+        bk = backup_caddyfile()
+        write_in_place(new)
+        self.show("Añadir servicio",
+                  f"✔ Servicio {v['host'].strip()} añadido (copia anterior: {os.path.relpath(bk, BASE)}).\n"
+                  "Recuerda: el DNS del dominio debe apuntar a este servidor y, si el destino es otro\n"
+                  "contenedor, debe estar en la misma red Docker que Caddy.")
+        self.draw()
+        state, _ = container_state()
+        if state == "running" and self.ask("¿Recargar Caddy ahora?", True):
+            self.act_reload()
+
+    # -- monitor de tráfico
+    def act_traffic(self):
+        state, _ = container_state()
+        if state != "running":
+            self.show("Monitor de tráfico", "El contenedor de Caddy no está en marcha. Usa [s] para arrancarlo.")
+            return
+        windows = [(60, "1 min"), (300, "5 min"), (900, "15 min")]
+        wi, paused_at = 1, None
+        feed = TrafficFeed()
+        self.scr.timeout(500)
+        try:
+            while True:
+                if paused_at is None:
+                    feed.drain()
+                self.draw_traffic(feed, windows[wi], paused_at)
+                k = self.scr.getch()
+                if k in (ord("q"), ord("Q"), 27):
+                    return
+                if k == ord("p"):
+                    paused_at = None if paused_at else time.time()
+                elif k == ord("w"):
+                    wi = (wi + 1) % len(windows)
+                elif k == ord("c"):
+                    feed.events.clear()
+        finally:
+            feed.close()
+            self.scr.timeout(1000)
+            self.show("Monitor de tráfico", "Monitor cerrado.")
+
+    def draw_traffic(self, feed, window, paused_at):
+        scr = self.scr
+        scr.erase()
+        h, w = scr.getmaxyx()
+        if h < 14 or w < 60:
+            scr.addstr(0, 0, "Terminal demasiado pequeña (mín. 60x14)")
+            scr.refresh()
+            return
+        span, label = window
+        now = paused_at or time.time()
+        ev = [e for e in feed.events if now - span <= e[0] <= now]
+        n = len(ev)
+        title = f" Monitor de tráfico · {CONTAINER} · ventana {label}" + ("  [EN PAUSA]" if paused_at else "")
+        scr.addstr(0, 0, title.ljust(w - 1), curses.A_REVERSE)
+        codes = Counter(e[5] // 100 for e in ev)
+        avg_ms = (sum(e[7] for e in ev) / n * 1000) if n else 0
+        scr.addstr(2, 2, f"Peticiones: {n}  ({n / span:.2f}/s)    Tráfico enviado: {human_bytes(sum(e[6] for e in ev))}"
+                         f"    Latencia media: {avg_ms:.0f} ms"[: w - 3])
+        x = 2
+        for cls, col in ((2, 1), (3, 4), (4, 3), (5, 2)):
+            txt = f"{cls}xx {codes.get(cls, 0)}"
+            scr.addstr(3, x, txt, curses.color_pair(col) | curses.A_BOLD)
+            x += len(txt) + 4
+
+        # sparkline: peticiones por tramo de la ventana
+        width = w - 6
+        buckets = [0] * width
+        start = now - span
+        for e in ev:
+            buckets[min(width - 1, int((e[0] - start) / span * width))] += 1
+        mx = max(buckets) or 1
+        line = "".join(" " if c == 0 else SPARK[min(7, int((c - 1) / max(mx - 1, 1) * 7.99))] for c in buckets)
+        scr.addstr(5, 2, line, curses.color_pair(1))
+        scr.addstr(6, 2, f"-{label}".ljust(width - 6) + "ahora", curses.A_DIM)
+
+        # rankings
+        half = w // 2
+        for col, (name, idx) in enumerate((("Top dominios", 1), ("Top IPs de cliente", 4))):
+            scr.addstr(8, 2 + col * half, name, curses.A_BOLD | curses.A_UNDERLINE)
+            for r, (val, cnt) in enumerate(Counter(e[idx] for e in ev).most_common(4)):
+                scr.addstr(9 + r, 2 + col * half, f"{cnt:>6}  {val}"[: half - 4])
+
+        # últimas peticiones
+        ly = 14
+        scr.addstr(ly - 1, 0, " Últimas peticiones ".ljust(w - 1), curses.A_UNDERLINE)
+        avail = h - ly - 1
+        if not n and not feed.events:
+            msg = ["Sin peticiones registradas todavía.",
+                   "Los accesos solo se registran si el sitio tiene la directiva `log` en el Caddyfile",
+                   "(los servicios creados con el asistente [a] la incluyen por defecto)."]
+            for i, m in enumerate(msg[:avail]):
+                scr.addstr(ly + i, 2, m[: w - 3], curses.A_DIM)
+        for i, e in enumerate(ev[-avail:] if avail > 0 else []):
+            ts, host, meth, uri, ip, st, size, dur = e
+            col = {2: 1, 3: 4, 4: 3, 5: 2}.get(st // 100, 0)
+            scr.addstr(ly + i, 1, time.strftime("%H:%M:%S", time.localtime(ts)))
+            scr.addstr(ly + i, 10, f"{st}", curses.color_pair(col) | curses.A_BOLD)
+            scr.addstr(ly + i, 14, f"{meth:6} {host}{uri}  ← {ip}  {dur * 1000:.0f}ms {human_bytes(size)}"[: w - 15])
+        foot = "[p] pausa · [w] ventana · [c] limpiar · [q] volver"
+        if not feed.alive:
+            foot = "⚠ Se cerró el flujo de logs (¿contenedor parado?) · " + foot
+        scr.addstr(h - 1, 0, foot[: w - 1], curses.A_DIM)
+        scr.refresh()
+
     def act_env(self):
         if not os.path.exists(ENVFILE):
             if not self.ask("No existe .env. ¿Crearlo desde .env.example?"):
@@ -444,7 +788,7 @@ class App:
     # -- bucle
     def loop(self):
         actions = {
-            "e": self.act_edit, "v": self.act_validate, "l": self.act_reload,
+            "a": self.act_add, "t": self.act_traffic, "e": self.act_edit, "v": self.act_validate, "l": self.act_reload,
             "s": self.act_start, "g": self.act_logs, "f": self.act_format,
             "c": self.act_view, "b": self.act_restore, "k": self.act_backup, "n": self.act_env,
             "x": lambda: self.act_compose("Parar", "stop", SERVICE, confirm="¿Parar Caddy? El sitio dejará de servirse por HTTPS."),

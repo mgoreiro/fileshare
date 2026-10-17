@@ -14,6 +14,9 @@
 	reverse_proxy fileshare:3000
 	encode gzip
 
+	# Registro de accesos (lo usa el monitor de tráfico de caddy-tui.py)
+	log
+
 	# Cabeceras de seguridad básicas
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
