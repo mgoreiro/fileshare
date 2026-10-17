@@ -120,16 +120,26 @@ def uptime(started):
 
 
 def validate_text(text):
-    """Valida el texto de un Caddyfile sin tocar el contenedor en marcha."""
+    """Valida el texto de un Caddyfile sin tocar el contenedor en marcha.
+
+    El candidato se escribe como fichero junto al Caddyfile y se monta la carpeta
+    del proyecto en /etc/caddy: así los "import" a ficheros relativos funcionan
+    (con stdin no se resuelven)."""
     domain = read_env("DOMAIN") or "example.com"
-    state, _ = container_state()
-    if state == "running":
-        cmd = ["docker", "exec", "-i", CONTAINER, "caddy", "validate",
-               "--config", "/dev/stdin", "--adapter", "caddyfile"]
-    else:
-        cmd = ["docker", "run", "--rm", "-i", "-e", f"DOMAIN={domain}", IMAGE,
-               "caddy", "validate", "--config", "/dev/stdin", "--adapter", "caddyfile"]
-    rc, out = run(cmd, stdin=text, timeout=60)
+    cand = os.path.join(BASE, f".Caddyfile.candidate.{os.getpid()}.{time.monotonic_ns()}")
+    try:
+        with open(cand, "w", encoding="utf-8") as f:
+            f.write(text)
+        cmd = ["docker", "run", "--rm", "-e", f"DOMAIN={domain}",
+               "-v", f"{BASE}:/etc/caddy:ro", "-w", "/etc/caddy", IMAGE,
+               "caddy", "validate", "--config", f"/etc/caddy/{os.path.basename(cand)}",
+               "--adapter", "caddyfile"]
+        rc, out = run(cmd, timeout=60)
+    except OSError as e:
+        return False, f"No se pudo preparar la validación: {e}"
+    finally:
+        if os.path.exists(cand):
+            os.unlink(cand)
     return rc == 0, pretty_logs(out)
 
 
