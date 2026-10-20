@@ -42,6 +42,8 @@ services:
     networks:
       - internal
 
+  # Administración opcional de este Caddy (editar/validar/recargar, certificados, alertas...): caddy-tui,
+  # instalable con apt (ver "Administrar Caddy con caddy-tui" en el README).
   caddy:
     image: caddy:2-alpine
     container_name: fileshare-caddy

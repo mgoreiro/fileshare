@@ -192,21 +192,63 @@ Encrypt — no hay que ejecutar `certbot` ni renovar nada a mano.
 - El `docker-compose.yml` original (HTTP simple, sin Caddy) sigue disponible
   tal cual para uso en red local o detrás de tu propio reverse proxy/VPN.
 
-### Gestionar Caddy desde una TUI
+### Administrar Caddy con caddy-tui (opcional)
 
-La utilidad de terminal para administrar este Caddy (editar el `Caddyfile` con
-validación, recargar sin cortes, añadir servicios con un asistente, monitor de
-tráfico en vivo y diagnóstico guiado) vive ahora en su propio repositorio:
-**[mgoreiro/caddy-tui](https://github.com/mgoreiro/caddy-tui)**. Es un único
-fichero Python sin dependencias; autodetecta el contenedor `fileshare-caddy`:
+**[caddy-tui](https://github.com/mgoreiro/caddy-tui)** es una interfaz de terminal para administrar el Caddy de esta
+variante HTTPS sin editar ficheros a ciegas. Es un programa aparte (no hace falta para que FileShare funcione) y
+permite, entre otras cosas:
+
+- **Editar el `Caddyfile`** con validación antes de guardar, copia de seguridad, deshacer y **recarga sin cortes**.
+- **Diagnosticar** los problemas típicos (puertos sin publicar, `Caddyfile` desfasado dentro del contenedor, destinos
+  inalcanzables…), comprobar que **cada sitio responde** y vigilar la **caducidad de los certificados** de Let's Encrypt.
+- **Añadir servicios** (otras aplicaciones detrás del mismo Caddy) con un asistente, ver el **tráfico en vivo** y las
+  **estadísticas** a lo largo del tiempo.
+- Avisos por **Telegram** si algo falla, **bloqueo de IPs** y baneo automático de escáneres.
+- **Actualizar la imagen de Caddy** validando antes tu configuración, y **exportar/importar** la configuración para
+  llevarla a otro servidor.
+
+#### Instalación con apt (repositorio firmado)
+
+Está disponible como **paquete Debian** en un **repositorio apt firmado** (Debian, Ubuntu, Raspberry Pi OS, Armbian…;
+sirve para cualquier arquitectura, incluidas las ARM de la Raspberry Pi / Orange Pi). Se añade una sola vez y después
+`apt upgrade` lo mantiene al día:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/mgoreiro/caddy-tui/main/caddy-tui.py
-chmod +x caddy-tui.py && ./caddy-tui.py
+curl -fsSL https://mgoreiro.github.io/caddy-tui/apt/caddy-tui.gpg | sudo tee /usr/share/keyrings/caddy-tui.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/caddy-tui.gpg] https://mgoreiro.github.io/caddy-tui/apt stable main" | sudo tee /etc/apt/sources.list.d/caddy-tui.list
+sudo apt update && sudo apt install caddy-tui
 ```
 
-Para que el monitor de tráfico funcione, el sitio debe tener la directiva `log`
-(ya incluida en el `Caddyfile` de este proyecto).
+La huella de la clave de firma es `BA7E 2381 6880 1639 21BC  70DE 15C2 632D D390 10EE`
+(`gpg --show-keys --with-fingerprint /usr/share/keyrings/caddy-tui.gpg`). Si prefieres no añadir el repositorio, también
+puedes descargar el fichero **`caddy-tui_X.Y.Z_all.deb`** de la
+[última release](https://github.com/mgoreiro/caddy-tui/releases/latest) e instalarlo con
+`sudo apt install ./caddy-tui_*_all.deb` (en ese caso las actualizaciones son manuales). Guía completa, actualizaciones
+automáticas y solución de problemas: [guía de instalación de caddy-tui](https://github.com/mgoreiro/caddy-tui/blob/main/docs/install.es.md).
+
+#### Uso con FileShare
+
+```bash
+sudo caddy-tui
+```
+
+Se ejecuta con `sudo` porque el `Caddyfile` suele ser de root. **Detecta él solo** el contenedor `fileshare-caddy`, el
+`Caddyfile` montado y el proyecto `docker-compose.https.yml`, así que no hay que configurar nada. Otros comandos útiles:
+
+```bash
+sudo caddy-tui --check             # diagnóstico sin interfaz (código de salida 0 = todo bien)
+sudo caddy-tui --setup-alerts      # avisos por Telegram + comprobación periódica (systemd o cron)
+```
+
+Notas:
+
+- Para el monitor de tráfico, las estadísticas y el baneo de escáneres, el sitio necesita la directiva `log`
+  (**ya incluida** en el `Caddyfile` de este proyecto).
+- Si, al configurar las alertas, quieres **reutilizar el bot de Telegram de FileShare**, indica tu `chat_id` cuando
+  caddy-tui lo pida (sin dejarlo vacío): la detección automática del chat usa `getUpdates`, que chocaría con el bot de
+  FileShare en funcionamiento. Lo más limpio es crear un bot aparte con @BotFather.
+- caddy-tui valida la configuración **dentro del propio contenedor de Caddy** (`docker exec`): no crea ni destruye
+  contenedores, así que no genera ruido en herramientas que vigilan los eventos de Docker.
 
 ## Construcción de la imagen para ARM (Raspberry Pi, etc.)
 
@@ -428,7 +470,9 @@ pero si vas a exponerlo fuera de tu red local, ten en cuenta:
   identificarse) y no escalan a múltiples réplicas. Si en el futuro necesitas
   varias instancias, cambia a un store compartido (p. ej. Redis).
 - Considera añadir un límite de intentos de login (rate limiting) si el panel
-  va a estar accesible desde Internet.
+  va a estar accesible desde Internet. Para vigilar el Caddy de delante (certificados, sitios que
+  no responden, escáneres que sondean rutas típicas como `/.env` o `/wp-login.php`) y bloquear
+  direcciones, puedes usar [caddy-tui](#administrar-caddy-con-caddy-tui-opcional).
 - Los enlaces de descarga son "por posesión del enlace" (como un enlace no
   listado): cualquiera que lo tenga puede descargar el fichero. Si necesitas
   caducidad, límite de descargas o protección adicional por enlace, lo puedo
