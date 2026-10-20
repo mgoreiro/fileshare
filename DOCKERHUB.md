@@ -127,6 +127,23 @@ puertos 80/443 abiertos hacia él. El `Caddyfile` de ejemplo y el fichero
 `docker-compose.https.yml` completo están en el
 [repositorio](https://github.com/mgoreiro/fileshare).
 
+### Administrar Caddy con caddy-tui (opcional)
+
+[caddy-tui](https://github.com/mgoreiro/caddy-tui) es una interfaz de terminal para administrar ese Caddy: editar el
+`Caddyfile` con validación y recarga sin cortes, diagnosticar problemas, vigilar la caducidad de los certificados,
+estadísticas de tráfico, avisos por Telegram y bloqueo de escáneres. Se instala como **paquete Debian** desde un
+**repositorio apt firmado** (Debian, Ubuntu, Raspberry Pi OS, Armbian; cualquier arquitectura):
+
+```bash
+curl -fsSL https://mgoreiro.github.io/caddy-tui/apt/caddy-tui.gpg | sudo tee /usr/share/keyrings/caddy-tui.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/caddy-tui.gpg] https://mgoreiro.github.io/caddy-tui/apt stable main" | sudo tee /etc/apt/sources.list.d/caddy-tui.list
+sudo apt update && sudo apt install caddy-tui
+sudo caddy-tui          # detecta solo el contenedor fileshare-caddy
+```
+
+Huella de la clave: `BA7E 2381 6880 1639 21BC  70DE 15C2 632D D390 10EE`. También hay un `.deb` en las
+[releases](https://github.com/mgoreiro/caddy-tui/releases/latest).
+
 ## Carpeta vigilada (subida automática por sistema de ficheros)
 
 Cualquier fichero que dejes en `data/watch/` (dentro del volumen `./data`
