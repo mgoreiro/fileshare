@@ -8,6 +8,8 @@ each one. Optional Telegram bot, watch folder and automatic HTTPS.
 
 **Author:** Miguel González Oreiro ([github.com/mgoreiro](https://github.com/mgoreiro))
 
+![FileShare admin panel](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
+
 ## Features
 
 - **Admin panel** with login: upload, list, copy link, delete.
