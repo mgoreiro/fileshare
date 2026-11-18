@@ -11,8 +11,8 @@ LABEL org.opencontainers.image.title="FileShare" \
 WORKDIR /app
 
 # Instalamos dependencias primero para aprovechar la caché de capas de Docker
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # Copiamos el resto del código
 COPY . .
