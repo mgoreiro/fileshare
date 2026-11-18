@@ -1,490 +1,185 @@
-# FileShare — Almacenamiento y compartición de ficheros
+# FileShare — self-hosted file sharing with direct links
 
-**Autor:** Miguel González Oreiro ([mgoreiro@gmail.com](mailto:mgoreiro@gmail.com) · [github.com/mgoreiro](https://github.com/mgoreiro))
+[Español](README.es.md)
 
-Sistema sencillo, contenido en un único contenedor Docker, para:
+A small, self-hosted service in a single Docker container. Upload files from a
+password-protected admin panel and get a **direct, public download link** for
+each one. Optional Telegram bot, watch folder and automatic HTTPS.
 
-- Subir ficheros desde un **panel de administración protegido por usuario/contraseña**.
-- Generar automáticamente un **enlace directo de descarga** (público, sin login) para cada fichero.
-- Listar, copiar el enlace y eliminar ficheros desde el panel.
+**Author:** Miguel González Oreiro ([github.com/mgoreiro](https://github.com/mgoreiro))
 
-Está construido sin ninguna dependencia nativa (bcryptjs en vez de bcrypt, sin
-sqlite compilado, etc.), por lo que la imagen Docker es **100% compatible con
-Linux ARM (arm64 / armv7)** sin necesidad de compilación cruzada — funciona
-igual en Raspberry Pi, servidores ARM, Apple Silicon, etc.
+## Features
 
-## Estructura del proyecto
+- **Admin panel** with login: upload, list, copy link, delete.
+- **Direct download links** (`/d/<uuid>`), public, no login, keeping the original file name.
+- **Download history** per file (date and IP of the last 200 downloads) and a download counter.
+- **Watch folder:** drop a file in `data/watch/` and it is published automatically.
+- **Telegram bot** (optional): download notifications and commands (`/status`, `/list`, `/delete`, `/subir`, `/listardescargas`).
+- **Automatic HTTPS** with Let's Encrypt through the bundled Caddy variant.
+- **No native dependencies** (bcryptjs, JSON storage): the image runs on amd64, arm64 and armv7 (Raspberry Pi, Apple Silicon, ARM servers).
+- **Login hardening:** per-IP rate limiting, session regeneration, timing-safe comparisons, atomic database writes with automatic backup of a corrupt file.
 
-```
-fileshare/
-├── server.js              # Backend Express (auth, subida, descarga, API admin)
-├── package.json
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── public/
-│   ├── login.html          # Página de login del panel
-│   └── admin/
-│       └── dashboard.html  # Panel de administración (subida + listado + borrado)
-└── data/                   # Persistencia (se monta como volumen)
-    ├── db.json              # Metadatos de ficheros + credenciales admin (hash)
-    └── uploads/              # Ficheros subidos
-```
+## Quick start
 
-## Puesta en marcha rápida (docker-compose)
-
-1. Copia el fichero de variables de entorno y edítalo:
+1. Copy the environment file and edit it:
 
    ```bash
    cp .env.example .env
    ```
 
-   Como mínimo, cambia:
-   - `ADMIN_USER` / `ADMIN_PASSWORD` → credenciales del panel.
-   - `SESSION_SECRET` → cadena aleatoria larga.
-   - `BASE_URL` → la URL/IP pública desde la que se accederá (se usa para
-     construir los enlaces de descarga, p. ej. `http://192.168.1.50:3000`
-     o `https://ficheros.midominio.com`).
+   At minimum set `ADMIN_USER`, `ADMIN_PASSWORD`, a long random `SESSION_SECRET`,
+   and `BASE_URL` (the public URL used to build download links, e.g.
+   `http://192.168.1.50:3000` or `https://files.example.com`).
 
-2. Levanta el servicio. La imagen ya está publicada en Docker Hub
-   (multi-arquitectura: amd64/arm64/armv7), así que lo más rápido es
-   descargarla en vez de compilarla:
+2. Start it. The multi-arch image is published on Docker Hub as `mgoreiro/fileshare`:
 
    ```bash
    docker compose pull
    docker compose up -d
    ```
 
-   Si prefieres compilarla tú mismo a partir del código de esta carpeta
-   (por ejemplo, si lo has modificado), usa en su lugar:
+   To build from this source tree instead, use `docker compose up -d --build`.
 
-   ```bash
-   docker compose up -d --build
-   ```
+3. Open `http://<your-host>:3000` and log in.
 
-3. Abre `http://<tu-ip-o-dominio>:3000` → te llevará al login del panel.
+Data (JSON database and uploaded files) lives in `./data`, mounted as a volume,
+so it survives restarts and upgrades.
 
-Los datos (base de datos JSON y ficheros subidos) se guardan en `./data`,
-montado como volumen, por lo que sobreviven a reinicios/actualizaciones del
-contenedor.
-
-## Cómo actualizar a una nueva versión
-
-**Si usas la imagen publicada en Docker Hub** (la opción por defecto), actualizar
-es tan sencillo como:
+## Updating
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-(o con `-f docker-compose.https.yml` si usas la variante HTTPS). Esto descarga
-la última versión de `mgoreiro/fileshare:latest` y recrea el contenedor con
-ella. **Los datos (`./data`) no se tocan** en ningún momento.
+(add `-f docker-compose.https.yml` for the HTTPS variant). `./data` is never
+touched. If you build from source, run `docker compose down && docker compose up -d --build`
+and compare your `.env` with `.env.example` for new variables.
 
-**Si en cambio compilas desde el código fuente** (porque lo has modificado, o
-prefieres no depender de Docker Hub), cuando cambies el código (`server.js`,
-ficheros de `public/`, `package.json`, etc.) los pasos son:
+## HTTPS with Let's Encrypt
 
-1. Sustituye los ficheros del proyecto por los nuevos (todo excepto la
-   carpeta `data/`, que es la que contiene tus ficheros y la configuración
-   del admin — consérvala tal cual).
+`docker-compose.https.yml` puts [Caddy](https://caddyserver.com/) in front of
+the app and obtains and renews a certificate automatically.
 
-   Si te han dado un `.zip` nuevo del proyecto, descomprímelo en otra carpeta
-   y copia todo salvo `data/` encima de tu instalación actual, o bien
-   descomprímelo directamente sobre la carpeta existente (la mayoría de
-   descompresores no tocan `data/` si ya existe con contenido, pero
-   revísalo si tienes dudas).
+Requirements: a domain whose A/AAAA record points to your server, and ports 80
+and 443 reachable from the Internet.
 
-2. Reconstruye la imagen y reinicia el contenedor:
-
-   ```bash
-   docker compose down
-   docker compose up -d --build
-   ```
-
-   (si usas la variante HTTPS: `docker compose -f docker-compose.https.yml down`
-   y luego `up -d --build` con ese mismo fichero).
-
-   Usa siempre `--build` explícitamente cuando quieras compilar desde tu
-   propio código: al tener definidos tanto `image` como `build` en el mismo
-   servicio, es la forma fiable de asegurarte de que Compose reconstruye la
-   imagen en vez de reutilizar una copia ya descargada de Docker Hub con el
-   mismo nombre.
-
-3. Comprueba que arrancó bien y que no hay errores:
-
-   ```bash
-   docker compose logs -f fileshare
-   ```
-
-4. Si tu `.env` ya existía de una instalación anterior, revisa si la nueva
-   versión añade variables nuevas (compáralo con `.env.example`) y añade a tu
-   `.env` las que falten — las variables nuevas suelen tener un valor por
-   defecto razonable si no las defines, pero conviene revisarlo.
-
-No hace falta borrar `./data` ni el volumen para actualizar: el usuario/
-contraseña admin, los ficheros ya subidos y sus enlaces se mantienen
-exactamente igual tras la actualización.
-
-## HTTPS con Let's Encrypt (recomendado si expones el servicio a Internet)
-
-Se incluye una variante lista para usar (`docker-compose.https.yml`) que añade
-[Caddy](https://caddyserver.com/) como reverse proxy delante de la aplicación.
-Caddy **obtiene y renueva automáticamente** un certificado válido de Let's
-Encrypt — no hay que ejecutar `certbot` ni renovar nada a mano.
-
-### Requisitos previos
-
-1. Un **dominio (o subdominio)** cuyo registro DNS tipo A (o AAAA) apunte a la
-   IP pública de este servidor. Let's Encrypt no emite certificados para
-   direcciones IP sueltas, necesita un nombre de dominio real.
-2. Los **puertos 80 y 443 abiertos y accesibles desde Internet** hacia este
-   servidor (el 80 se usa para el reto HTTP-01 de verificación, el 443 para
-   servir el tráfico HTTPS). Si tu router hace NAT, redirige ambos puertos
-   hacia esta máquina.
-
-### Pasos
-
-1. Copia `.env.example` a `.env` y rellena, además de las credenciales
-   habituales, la variable `DOMAIN` con tu dominio real:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   ```dotenv
-   DOMAIN=ficheros.midominio.com
-   ADMIN_USER=admin
-   ADMIN_PASSWORD=una_contraseña_fuerte
-   SESSION_SECRET=una_cadena_aleatoria_larga
-   ```
-
-   (No hace falta tocar `BASE_URL` ni `COOKIE_SECURE`: `docker-compose.https.yml`
-   ya los fuerza automáticamente a `https://$DOMAIN` y `true`.)
-
-2. Levanta el stack con el fichero de compose de HTTPS:
-
-   ```bash
-   docker compose -f docker-compose.https.yml up -d --build
-   ```
-
-3. En un plazo de unos segundos a un par de minutos, Caddy solicitará el
-   certificado la primera vez que llegue tráfico. Puedes comprobar el
-   progreso con:
-
-   ```bash
-   docker compose -f docker-compose.https.yml logs -f caddy
-   ```
-
-4. Abre `https://ficheros.midominio.com` — el candado debería aparecer ya
-   como válido, y las peticiones a `http://` se redirigen automáticamente a
-   `https://`.
-
-### Notas
-
-- Con esta variante, el contenedor `fileshare` **ya no expone el puerto 3000
-  al host**; todo el tráfico pasa obligatoriamente por Caddy.
-- Los certificados se guardan en el volumen Docker `caddy_data`, así que
-  sobreviven a reinicios/actualizaciones y no se vuelven a pedir cada vez.
-- Si más adelante cambias de dominio, edita `DOMAIN` en `.env` y reinicia:
-  `docker compose -f docker-compose.https.yml up -d`.
-- El `docker-compose.yml` original (HTTP simple, sin Caddy) sigue disponible
-  tal cual para uso en red local o detrás de tu propio reverse proxy/VPN.
-
-### Administrar Caddy con caddy-tui (opcional)
-
-**[caddy-tui](https://github.com/mgoreiro/caddy-tui)** es una interfaz de terminal para administrar el Caddy de esta
-variante HTTPS sin editar ficheros a ciegas. Es un programa aparte (no hace falta para que FileShare funcione) y
-permite, entre otras cosas:
-
-- **Editar el `Caddyfile`** con validación antes de guardar, copia de seguridad, deshacer y **recarga sin cortes**.
-- **Diagnosticar** los problemas típicos (puertos sin publicar, `Caddyfile` desfasado dentro del contenedor, destinos
-  inalcanzables…), comprobar que **cada sitio responde** y vigilar la **caducidad de los certificados** de Let's Encrypt.
-- **Añadir servicios** (otras aplicaciones detrás del mismo Caddy) con un asistente, ver el **tráfico en vivo** y las
-  **estadísticas** a lo largo del tiempo.
-- Avisos por **Telegram** si algo falla, **bloqueo de IPs** y baneo automático de escáneres.
-- **Actualizar la imagen de Caddy** validando antes tu configuración, y **exportar/importar** la configuración para
-  llevarla a otro servidor.
-
-#### Instalación con apt (repositorio firmado)
-
-Está disponible como **paquete Debian** en un **repositorio apt firmado** (Debian, Ubuntu, Raspberry Pi OS, Armbian…;
-sirve para cualquier arquitectura, incluidas las ARM de la Raspberry Pi / Orange Pi). Se añade una sola vez y después
-`apt upgrade` lo mantiene al día:
-
-```bash
-curl -fsSL https://mgoreiro.github.io/caddy-tui/apt/caddy-tui.gpg | sudo tee /usr/share/keyrings/caddy-tui.gpg >/dev/null
-echo "deb [signed-by=/usr/share/keyrings/caddy-tui.gpg] https://mgoreiro.github.io/caddy-tui/apt stable main" | sudo tee /etc/apt/sources.list.d/caddy-tui.list
-sudo apt update && sudo apt install caddy-tui
+```dotenv
+DOMAIN=files.example.com
+ADMIN_USER=admin
+ADMIN_PASSWORD=a_strong_password
+SESSION_SECRET=a_long_random_string
 ```
 
-La huella de la clave de firma es `BA7E 2381 6880 1639 21BC  70DE 15C2 632D D390 10EE`
-(`gpg --show-keys --with-fingerprint /usr/share/keyrings/caddy-tui.gpg`). Si prefieres no añadir el repositorio, también
-puedes descargar el fichero **`caddy-tui_X.Y.Z_all.deb`** de la
-[última release](https://github.com/mgoreiro/caddy-tui/releases/latest) e instalarlo con
-`sudo apt install ./caddy-tui_*_all.deb` (en ese caso las actualizaciones son manuales). Guía completa, actualizaciones
-automáticas y solución de problemas: [guía de instalación de caddy-tui](https://github.com/mgoreiro/caddy-tui/blob/main/docs/install.es.md).
-
-#### Uso con FileShare
-
 ```bash
-sudo caddy-tui
+docker compose -f docker-compose.https.yml up -d --build
+docker compose -f docker-compose.https.yml logs -f caddy   # watch the certificate being issued
 ```
 
-Se ejecuta con `sudo` porque el `Caddyfile` suele ser de root. **Detecta él solo** el contenedor `fileshare-caddy`, el
-`Caddyfile` montado y el proyecto `docker-compose.https.yml`, así que no hay que configurar nada. Otros comandos útiles:
+In this variant the app no longer publishes port 3000; all traffic goes through
+Caddy. Certificates are stored in the `caddy_data` volume. `BASE_URL`,
+`COOKIE_SECURE` and `TRUST_PROXY` are set for you.
 
-```bash
-sudo caddy-tui --check             # diagnóstico sin interfaz (código de salida 0 = todo bien)
-sudo caddy-tui --setup-alerts      # avisos por Telegram + comprobación periódica (systemd o cron)
-```
+The optional [caddy-tui](https://github.com/mgoreiro/caddy-tui) terminal tool
+can manage this Caddy (validated edits, diagnostics, certificate expiry,
+Telegram alerts, scanner blocking). It is a separate program and is not needed
+to run FileShare.
 
-Notas:
+## Building for ARM
 
-- Para el monitor de tráfico, las estadísticas y el baneo de escáneres, el sitio necesita la directiva `log`
-  (**ya incluida** en el `Caddyfile` de este proyecto).
-- Si, al configurar las alertas, quieres **reutilizar el bot de Telegram de FileShare**, indica tu `chat_id` cuando
-  caddy-tui lo pida (sin dejarlo vacío): la detección automática del chat usa `getUpdates`, que chocaría con el bot de
-  FileShare en funcionamiento. Lo más limpio es crear un bot aparte con @BotFather.
-- caddy-tui valida la configuración **dentro del propio contenedor de Caddy** (`docker exec`): no crea ni destruye
-  contenedores, así que no genera ruido en herramientas que vigilan los eventos de Docker.
-
-## Construcción de la imagen para ARM (Raspberry Pi, etc.)
-
-Si vas a desplegar directamente en un dispositivo ARM, `docker compose up
---build` ejecutado **en ese mismo dispositivo** ya genera una imagen nativa
-para su arquitectura — no se necesita nada especial.
-
-Si en cambio quieres construir la imagen en un equipo x86 (por ejemplo tu
-portátil) y luego llevarla a un dispositivo ARM, usa `buildx` para generar una
-imagen multi-arquitectura:
+Building on the ARM device itself (`docker compose up -d --build`) gives a
+native image. To build elsewhere:
 
 ```bash
 docker buildx create --use
 docker buildx build \
   --platform linux/amd64,linux/arm64,linux/arm/v7 \
-  -t tu-usuario/fileshare:latest \
-  --push .
+  -t your-user/fileshare:latest --push .
 ```
 
-(el `--push` requiere haber hecho `docker login` en un registro como Docker
-Hub o GHCR; si solo quieres cargarla localmente en un dispositivo ARM
-concreto, usa `--platform linux/arm64 --load` en su lugar, o transfiere el
-`docker save`/`docker load` de la imagen).
+## Watch folder
 
-## Carpeta vigilada (subida automática por sistema de ficheros)
+Any file placed in `data/watch/` is registered automatically with its own
+direct link, as if uploaded from the panel (it shows a "📁 folder" tag). It is
+then **moved** to `data/uploads/`.
 
-Cualquier fichero que dejes en `data/watch/` (en el host, dentro del mismo
-volumen `./data` que ya se monta en `docker-compose.yml`) se da de alta
-**automáticamente**, con su propio enlace directo, igual que si se hubiera
-subido desde el panel. En el listado del panel aparece con una etiqueta
-"📁 carpeta" para distinguirlo de las subidas manuales.
+- Hidden files and in-progress extensions (`.tmp`, `.part`, `.partial`, `.crdownload`, `.download`) are ignored.
+- Before processing, the service waits until the file size stops changing (a stricter check for files of 100 MB or more).
+- The recorded size of every file is compared with the real size on disk at startup and then every hour (`SIZE_CHECK_INTERVAL_MINUTES`, `0` = startup only).
+- Files dropped while the container is stopped are processed on the next start.
 
-Funcionamiento:
+Disable it with `WATCH_ENABLED=false`.
 
-- Se ignoran los ficheros ocultos (`.algo`) y las extensiones típicas de una
-  copia todavía en curso (`.tmp`, `.part`, `.partial`, `.crdownload`,
-  `.download`).
-- Antes de procesar un fichero, se espera a que su tamaño deje de cambiar. Para
-  ficheros de menos de 100 MB basta una comprobación rápida (~2-3 segundos, la
-  copia ya habrá terminado casi con toda seguridad); para ficheros de 100 MB o
-  más se aplica una verificación reforzada, con varias comprobaciones
-  espaciadas en el tiempo y una última relectura tras mover el fichero — así
-  se evita registrar un tamaño incorrecto si la transferencia tiene alguna
-  pausa larga a mitad de camino (redes lentas, Wi-Fi inestable, recursos SMB
-  compartidos...).
-- Como red de seguridad adicional, el servicio compara periódicamente el
-  tamaño registrado de cada fichero con su tamaño real en disco y corrige
-  automáticamente cualquier discrepancia — tanto **al arrancar** como, a
-  partir de ahí, **cada hora** (configurable con `SIZE_CHECK_INTERVAL_MINUTES`,
-  o desactivable con `SIZE_CHECK_INTERVAL_MINUTES=0` para dejar solo la
-  comprobación de arranque). Verás un aviso en los logs si corrige algo.
-- Una vez procesado, el fichero se **mueve** de `data/watch/` a
-  `data/uploads/`, así que la carpeta vigilada queda vacía y no se reprocesa
-  nada en sucesivos reinicios.
-- Si el contenedor está parado y dejas un fichero mientras tanto, se procesa
-  en cuanto vuelve a arrancar.
+> **Security note:** anyone with write access to `./data/watch` (SSH, Samba,
+> shared USB…) can publish files without logging in to the panel. Treat that
+> folder with the same trust as the admin credentials.
 
-Para desactivar esta función, pon en `.env`:
+## Telegram bot
 
-```dotenv
-WATCH_ENABLED=false
-```
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to receive a notification for
+every download (file, size, source IP, date) and to manage the service from
+the chat. It uses long polling, so no webhook or extra endpoint is needed and
+no extra dependency is added.
 
-> **Aviso de seguridad:** cualquiera con acceso al sistema de ficheros del
-> host donde está montado `./data/watch` (SSH, Samba, un USB compartido,
-> etc.) podrá publicar ficheros **sin pasar por el login del panel**. Trata el
-> acceso a esa carpeta con la misma confianza que las credenciales del panel.
+1. Talk to **@BotFather**, send `/newbot` and keep the token.
+2. Send any message to your new bot, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `"chat":{"id":...}`.
+3. Put both values in `.env` and run `docker compose up -d --build`.
 
-## Bot de Telegram: notificaciones y comandos
-
-Si defines `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`, el bot hace dos cosas:
-
-1. **Notifica** cada descarga (fichero, tamaño, IP de origen y fecha).
-2. **Responde a comandos** para gestionar el servicio desde el propio chat de
-   Telegram, sin necesidad de entrar al panel web.
-
-No añade ninguna dependencia nueva: usa el `fetch` que ya trae Node de serie,
-y consulta las novedades mediante sondeo (*long polling*), así que no hace
-falta exponer ningún endpoint nuevo ni configurar un webhook.
-
-### 1. Crear el bot y obtener el token
-
-1. En Telegram, habla con **@BotFather**.
-2. Envía `/newbot` y sigue las instrucciones (nombre y usuario del bot).
-3. BotFather te dará un token con este aspecto:
-   `123456789:AAHk3jFj93jfWEIfj93ifjWEIf93jf`. Ese es tu `TELEGRAM_BOT_TOKEN`.
-
-### 2. Obtener tu chat_id
-
-1. Busca tu bot recién creado en Telegram (por el usuario que le pusiste) y
-   envíale cualquier mensaje, por ejemplo "hola" (los bots no pueden
-   escribirte primero: tienes que iniciar tú la conversación).
-2. Visita esta URL en el navegador, sustituyendo `<TOKEN>` por tu token:
-   ```
-   https://api.telegram.org/bot<TOKEN>/getUpdates
-   ```
-3. Busca en la respuesta JSON el campo `"chat":{"id":...}` — ese número
-   (puede ser negativo si es un grupo) es tu `TELEGRAM_CHAT_ID`.
-
-### 3. Configurar y desplegar
-
-En tu `.env`:
-
-```dotenv
-TELEGRAM_BOT_TOKEN=123456789:AAHk3jFj93jfWEIfj93ifjWEIf93jf
-TELEGRAM_CHAT_ID=987654321
-```
-
-```bash
-docker compose up -d --build
-```
-
-(o con `-f docker-compose.https.yml` si usas la variante HTTPS).
-
-### Comandos del bot
-
-Una vez configurado, escribe `/help` (o `/start`) al bot para ver este mismo
-listado en cualquier momento:
-
-| Comando | Qué hace |
+| Command | What it does |
 |---|---|
-| `/status` | Estado del servicio: tiempo activo, nº de ficheros, espacio ocupado, descargas totales y memoria usada. |
-| `/list` | Lista todos los ficheros subidos, con su tamaño y nº de descargas. |
-| `/delete` | Muestra un menú con botones (uno por fichero) para elegir cuál eliminar. |
-| `/subir` | El bot te pide que le envíes un fichero; en cuanto se lo mandes (como documento/archivo, no como foto), lo sube y te devuelve el enlace directo — como si lo hubieras subido desde el panel. |
-| `/listardescargas` | Muestra un menú con los ficheros; al elegir uno, responde con el historial de descargas de ese fichero (fecha + IP de cada una). |
+| `/status` | Uptime, number of files, space used, total downloads, memory. |
+| `/list` | All files with size and download count. |
+| `/delete` | Button menu to choose a file to delete. |
+| `/subir` | The bot asks for a file (send it as a document) and replies with its direct link. |
+| `/listardescargas` | Pick a file and get its download history. |
 
-**Autorización:** solo el/los `chat_id` indicados pueden usar estos comandos.
-Por defecto es el mismo `TELEGRAM_CHAT_ID` que recibe las notificaciones; si
-quieres que varias personas puedan usar los comandos (por ejemplo, tú y un
-familiar), añade `TELEGRAM_ALLOWED_CHAT_IDS` con varios `chat_id` separados
-por comas:
+Only the configured chat (plus any in `TELEGRAM_ALLOWED_CHAT_IDS`, comma
+separated) can use commands; everything else is ignored. If the variables are
+empty the whole feature is off and no network calls are made. Telegram
+failures never affect downloads.
 
-```dotenv
-TELEGRAM_ALLOWED_CHAT_IDS=987654321,123123123
-```
+## Environment variables
 
-Cualquier mensaje o comando de un chat no incluido en esa lista se ignora
-por completo.
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Internal container port | `3000` |
+| `ADMIN_USER` | Admin user (only applied if none exists yet) | — |
+| `ADMIN_PASSWORD` | Admin password (stored as a bcrypt hash) | — |
+| `SESSION_SECRET` | Secret used to sign session cookies | random if unset |
+| `BASE_URL` | Public URL used to build `/d/:id` links | `http://localhost:3000` |
+| `MAX_FILE_SIZE_MB` | Maximum upload size in MB (0 = unlimited) | `500` |
+| `WATCH_ENABLED` | Enable the `data/watch/` folder | `true` |
+| `SIZE_CHECK_INTERVAL_MINUTES` | Background size-consistency check interval (0 = startup only) | `60` |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | — (disabled) |
+| `TELEGRAM_CHAT_ID` | Chat that receives notifications and may use commands | — (disabled) |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Extra chat IDs allowed to use commands | `TELEGRAM_CHAT_ID` |
+| `RESET_ADMIN` | Regenerate the admin user/password at startup | `false` |
+| `TRUST_PROXY` | Trusted proxies for `X-Forwarded-For`. `false` if you publish port 3000 directly, `1` behind Caddy/nginx (the HTTPS compose sets it) | `false` in `docker-compose.yml` |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MINUTES` | Failed logins allowed per IP, and lock-out minutes (0 = no limit) | `10` / `15` |
 
-### Notas
+The admin account is created only the **first time** the container starts
+(when `data/db.json` does not exist yet). To change it later, set
+`RESET_ADMIN=true`, restart once, and set it back to `false`.
 
-- Si dejas `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` vacías, toda la función
-  (notificaciones y comandos) queda desactivada y no se realiza ninguna
-  llamada de red — es el comportamiento por defecto.
-- Si solo defines una de las dos variables, verás un aviso en los logs y la
-  función no se activa hasta que definas ambas.
-- Un fallo de red hacia Telegram (sin internet en ese momento, token
-  incorrecto, etc.) **nunca afecta a las descargas ni al resto del
-  servicio** — se reintenta el sondeo automáticamente y todo lo demás sigue
-  funcionando con normalidad. El error queda registrado en los logs
-  (`docker compose logs fileshare`).
-- Para evitar recibir un mensaje/registro por cada trozo de un fichero
-  grande cuando un gestor de descargas lo reanuda por partes, solo se
-  cuenta/notifica en la petición inicial de cada descarga.
-- La IP que se reporta es la del cliente real (respeta `X-Forwarded-For`
-  detrás de Caddy), no la IP interna del contenedor.
-- Al arrancar, el bot descarta cualquier mensaje/comando pendiente de antes
-  de que el contenedor se iniciara, para no ejecutar de golpe comandos
-  antiguos (por ejemplo, un `/delete` que hubieras enviado por error mientras
-  el servicio estaba parado).
+If you run your own reverse proxy (nginx, Traefik…) with the plain
+`docker-compose.yml`, set `TRUST_PROXY=1`; otherwise the download history and
+the login limiter will see the proxy's IP.
 
-## Historial de descargas por fichero
+## How the direct link works
 
-Tanto en el panel web como por Telegram (`/listardescargas`) puedes consultar,
-para cada fichero, cuándo se ha descargado y desde qué IP. En el panel, pulsa
-el botón **"Descargas"** de la fila del fichero para ver ese historial en una
-ventana emergente. Se guardan hasta las últimas 200 descargas por fichero;
-más allá de eso, las más antiguas se descartan automáticamente para que la
-base de datos no crezca sin control.
+Each upload gets a UUID and a link like `https://your-host/d/<id>`. It is
+public (no login) and serves the file with its original name. The panel counts
+downloads per file.
 
-## Variables de entorno
+## Security notes
 
-| Variable          | Descripción                                                                 | Por defecto              |
-|-------------------|------------------------------------------------------------------------------|---------------------------|
-| `PORT`            | Puerto interno del contenedor                                               | `3000`                    |
-| `ADMIN_USER`      | Usuario del panel de administración (solo se aplica si no existe uno ya)    | —                          |
-| `ADMIN_PASSWORD`  | Contraseña del panel (se guarda como hash bcrypt, nunca en texto plano)     | —                          |
-| `SESSION_SECRET`  | Secreto para firmar las cookies de sesión                                   | aleatorio si no se define |
-| `BASE_URL`        | URL pública usada para construir los enlaces `/d/:id`                       | `http://localhost:3000`   |
-| `MAX_FILE_SIZE_MB`| Tamaño máximo de fichero admitido, en MB (0 = sin límite)                   | `500`                     |
-| `WATCH_ENABLED`   | Activa/desactiva la carpeta vigilada `data/watch/` (ver sección anterior)   | `true`                    |
-| `SIZE_CHECK_INTERVAL_MINUTES` | Cada cuántos minutos se corrigen tamaños desincronizados en segundo plano (0 = desactivar, solo comprobación de arranque) | `60` |
-| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (notificaciones + comandos, ver sección)      | — (desactivado)           |
-| `TELEGRAM_CHAT_ID`   | Chat de Telegram que recibe notificaciones y puede usar los comandos      | — (desactivado)           |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | Lista opcional de chat_id (separados por comas) autorizados a usar los comandos, además del anterior | `TELEGRAM_CHAT_ID` |
-| `RESET_ADMIN`     | Si es `true`, fuerza a regenerar el usuario/contraseña admin al arrancar    | `false`                   |
-| `TRUST_PROXY`     | Proxies de confianza delante (X-Forwarded-For). `false` si publicas el puerto 3000 directamente; `1` detrás de Caddy/nginx (el compose HTTPS ya lo fija) | `false` en `docker-compose.yml` |
-| `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MINUTES` | Intentos de login fallidos permitidos por IP y minutos de bloqueo al superarlos (0 = sin límite) | `10` / `15` |
+- **Use HTTPS** if you expose it to the Internet (the Caddy variant does this for you).
+- Sessions live in memory (`MemoryStore`): fine for a single container, but users must log in again after a restart and it does not scale to several replicas.
+- Download links are "possession of the link" (like an unlisted link): anyone who has it can download the file.
+- Change the default `ADMIN_PASSWORD` and `SESSION_SECRET`; the server warns at startup if you did not.
 
-> **Nota:** el usuario/contraseña admin solo se crea la **primera vez** que
-> arranca el contenedor (cuando `data/db.json` todavía no existe). Si quieres
-> cambiarlos más adelante, pon `RESET_ADMIN=true` en `.env`, reinicia el
-> contenedor una vez, y vuelve a ponerlo en `false`.
-
-> **Si usas tu propio proxy inverso** (nginx, Traefik…) con `docker-compose.yml`,
-> pon `TRUST_PROXY=1` en `.env`; si no, el servidor verá la IP del proxy en el
-> historial de descargas y en el límite de intentos de login.
-
-## Cómo funciona el enlace directo
-
-Al subir un fichero desde el panel, se genera un identificador único (UUID) y
-un enlace del tipo:
-
-```
-https://tu-dominio-o-ip:puerto/d/<id>
-```
-
-Ese enlace es público (no requiere login) y sirve el fichero directamente
-para su descarga, conservando el nombre original. El panel lleva la cuenta de
-cuántas veces se ha descargado cada fichero.
-
-## Seguridad — recomendaciones antes de exponerlo a Internet
-
-Este proyecto cubre lo pedido (subida + enlace directo + panel con login),
-pero si vas a exponerlo fuera de tu red local, ten en cuenta:
-
-- **Ponlo detrás de HTTPS**: usa `docker-compose.https.yml` (ver sección
-  "HTTPS con Let's Encrypt" más arriba), que añade Caddy con certificado
-  automático. Sin esto, las cookies de sesión y los ficheros viajan en texto
-  plano por HTTP.
-- Las sesiones se guardan en memoria (`express-session` con `MemoryStore`),
-  lo cual es correcto para un único contenedor con un solo proceso, pero se
-  reinician si el contenedor se reinicia (los usuarios tendrán que volver a
-  identificarse) y no escalan a múltiples réplicas. Si en el futuro necesitas
-  varias instancias, cambia a un store compartido (p. ej. Redis).
-- Considera añadir un límite de intentos de login (rate limiting) si el panel
-  va a estar accesible desde Internet. Para vigilar el Caddy de delante (certificados, sitios que
-  no responden, escáneres que sondean rutas típicas como `/.env` o `/wp-login.php`) y bloquear
-  direcciones, puedes usar [caddy-tui](#administrar-caddy-con-caddy-tui-opcional).
-- Los enlaces de descarga son "por posesión del enlace" (como un enlace no
-  listado): cualquiera que lo tenga puede descargar el fichero. Si necesitas
-  caducidad, límite de descargas o protección adicional por enlace, lo puedo
-  añadir.
-
-## Desarrollo local sin Docker
+## Local development (no Docker)
 
 ```bash
 npm install
@@ -492,13 +187,10 @@ cp .env.example .env
 node server.js
 ```
 
-## Licencia
+## License
 
-MIT — ver el fichero [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
-## Autor
+## Author
 
-**Miguel González Oreiro**
-📧 [mgoreiro@gmail.com](mailto:mgoreiro@gmail.com)
-🔗 [github.com/mgoreiro](https://github.com/mgoreiro)
-🐳 [hub.docker.com/r/mgoreiro/fileshare](https://hub.docker.com/r/mgoreiro/fileshare)
+**Miguel González Oreiro** · [github.com/mgoreiro](https://github.com/mgoreiro) · [hub.docker.com/r/mgoreiro/fileshare](https://hub.docker.com/r/mgoreiro/fileshare)
