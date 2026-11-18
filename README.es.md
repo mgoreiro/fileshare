@@ -10,6 +10,8 @@ Sistema sencillo, contenido en un único contenedor Docker, para:
 - Generar automáticamente un **enlace directo de descarga** (público, sin login) para cada fichero.
 - Listar, copiar el enlace y eliminar ficheros desde el panel.
 
+![Panel de administración de FileShare](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
+
 Está construido sin ninguna dependencia nativa (bcryptjs en vez de bcrypt, sin
 sqlite compilado, etc.), por lo que la imagen Docker es **100% compatible con
 Linux ARM (arm64 / armv7)** sin necesidad de compilación cruzada — funciona
