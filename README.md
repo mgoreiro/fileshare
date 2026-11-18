@@ -436,11 +436,17 @@ base de datos no crezca sin control.
 | `TELEGRAM_CHAT_ID`   | Chat de Telegram que recibe notificaciones y puede usar los comandos      | — (desactivado)           |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | Lista opcional de chat_id (separados por comas) autorizados a usar los comandos, además del anterior | `TELEGRAM_CHAT_ID` |
 | `RESET_ADMIN`     | Si es `true`, fuerza a regenerar el usuario/contraseña admin al arrancar    | `false`                   |
+| `TRUST_PROXY`     | Proxies de confianza delante (X-Forwarded-For). `false` si publicas el puerto 3000 directamente; `1` detrás de Caddy/nginx (el compose HTTPS ya lo fija) | `false` en `docker-compose.yml` |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MINUTES` | Intentos de login fallidos permitidos por IP y minutos de bloqueo al superarlos (0 = sin límite) | `10` / `15` |
 
 > **Nota:** el usuario/contraseña admin solo se crea la **primera vez** que
 > arranca el contenedor (cuando `data/db.json` todavía no existe). Si quieres
 > cambiarlos más adelante, pon `RESET_ADMIN=true` en `.env`, reinicia el
 > contenedor una vez, y vuelve a ponerlo en `false`.
+
+> **Si usas tu propio proxy inverso** (nginx, Traefik…) con `docker-compose.yml`,
+> pon `TRUST_PROXY=1` en `.env`; si no, el servidor verá la IP del proxy en el
+> historial de descargas y en el límite de intentos de login.
 
 ## Cómo funciona el enlace directo
 

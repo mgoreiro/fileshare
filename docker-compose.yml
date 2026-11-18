@@ -26,5 +26,8 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
       - SIZE_CHECK_INTERVAL_MINUTES=${SIZE_CHECK_INTERVAL_MINUTES:-60}
+      # Puerto 3000 publicado directamente: no se confía en X-Forwarded-For. Si pones tu propio
+      # proxy delante, define TRUST_PROXY=1 en .env.
+      - TRUST_PROXY=${TRUST_PROXY:-false}
       # - RESET_ADMIN=true   # descomentar una vez para forzar el cambio de usuario/contraseña
     restart: unless-stopped

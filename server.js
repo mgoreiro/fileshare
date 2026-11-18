@@ -42,13 +42,25 @@ function loadDB() {
   try {
     return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   } catch (e) {
-    console.error('Error leyendo db.json, se crea una nueva:', e.message);
+    // Antes de empezar con una base de datos vacía (cuya primera escritura machacaría
+    // el db.json dañado), guardamos una copia para poder recuperar los metadatos a mano.
+    const backup = `${DB_FILE}.corrupt-${Date.now()}`;
+    try {
+      fs.copyFileSync(DB_FILE, backup);
+      console.error(`Error leyendo db.json (${e.message}). Copia del fichero dañado guardada en ${backup}; se crea una base de datos nueva.`);
+    } catch (copyErr) {
+      console.error(`Error leyendo db.json (${e.message}) y además no se pudo guardar copia: ${copyErr.message}`);
+    }
     return { admin: null, files: [] };
   }
 }
 
+// Escritura atómica: se escribe en un fichero temporal y se renombra sobre db.json.
+// Así, si el proceso se corta a mitad de escritura, db.json nunca queda a medias.
 function saveDB(db) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  const tmp = `${DB_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+  fs.renameSync(tmp, DB_FILE);
 }
 
 let db = loadDB();
@@ -121,6 +133,20 @@ if (SIZE_CHECK_INTERVAL_MINUTES > 0) {
     db.admin = { username: envUser, passwordHash: hash };
     saveDB(db);
     console.log(`[INFO] Usuario admin configurado: ${envUser}`);
+  }
+
+  // Aviso (no bloquea el arranque) si siguen los valores de ejemplo del .env.example.
+  if (db.admin && bcrypt.compareSync('changeme', db.admin.passwordHash)) {
+    console.warn(
+      '[AVISO DE SEGURIDAD] El usuario admin sigue teniendo la contraseña de ejemplo "changeme". ' +
+      'Cámbiala ya: define ADMIN_PASSWORD y arranca una vez con RESET_ADMIN=true.'
+    );
+  }
+  if (process.env.SESSION_SECRET === 'please_change_this_secret') {
+    console.warn(
+      '[AVISO DE SEGURIDAD] SESSION_SECRET tiene el valor de ejemplo. Usa una cadena larga y aleatoria ' +
+      '(por ejemplo: openssl rand -hex 32).'
+    );
   }
 })();
 
@@ -257,7 +283,20 @@ if (WATCH_ENABLED) {
 
 // ---------- App Express ----------
 const app = express();
-app.set('trust proxy', 1);
+
+// TRUST_PROXY indica cuántos proxies de confianza hay delante (p. ej. 1 con Caddy).
+// Si el puerto 3000 se publica directamente, pon false/0: así nadie puede falsear su IP
+// con la cabecera X-Forwarded-For (se usa en el historial de descargas, las notificaciones
+// de Telegram y el límite de intentos de login). Por compatibilidad, si no se define, es 1.
+function parseTrustProxy(value) {
+  const s = String(value === undefined ? '1' : value).trim();
+  const lower = s.toLowerCase();
+  if (lower === '' || lower === 'false' || lower === '0') return false;
+  if (lower === 'true') return true;
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return s; // lista de IPs/subredes que entiende Express (p. ej. "loopback, 172.18.0.0/16")
+}
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 
 // Cuando el cliente corta la conexión a mitad de una subida larga (habitual con
 // ficheros de varios GB: WiFi inestable, portátil suspendido, pestaña en segundo
@@ -745,20 +784,84 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
+// Límite de intentos fallidos de login por IP, en memoria (sin dependencias). Tras
+// LOGIN_MAX_ATTEMPTS fallos dentro de la ventana, esa IP recibe 429 hasta que expire.
+const LOGIN_MAX_ATTEMPTS = parseInt(process.env.LOGIN_MAX_ATTEMPTS || '10', 10);
+const LOGIN_WINDOW_MS = parseFloat(process.env.LOGIN_WINDOW_MINUTES || '15') * 60 * 1000;
+const loginAttempts = new Map(); // ip -> { count, resetAt }
+
+function loginBlockedSeconds(ip) {
+  if (LOGIN_MAX_ATTEMPTS <= 0) return 0; // 0 desactiva el límite
+  const entry = loginAttempts.get(ip);
+  if (!entry) return 0;
+  if (entry.resetAt <= Date.now()) {
+    loginAttempts.delete(ip);
+    return 0;
+  }
+  return entry.count >= LOGIN_MAX_ATTEMPTS ? Math.ceil((entry.resetAt - Date.now()) / 1000) : 0;
+}
+
+function registerLoginFailure(ip) {
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || entry.resetAt <= now) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+  } else {
+    entry.count++;
+  }
+}
+
+// Limpieza periódica para que el mapa no crezca sin control.
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of loginAttempts) if (entry.resetAt <= now) loginAttempts.delete(ip);
+}, 10 * 60 * 1000).unref();
+
+function sameString(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+app.post('/login', async (req, res) => {
+  const ip = normalizeIp(req.ip);
+  const blocked = loginBlockedSeconds(ip);
+  if (blocked > 0) {
+    res.set('Retry-After', String(blocked));
+    return res.status(429).json({
+      error: `Demasiados intentos fallidos. Vuelve a intentarlo en ${Math.ceil(blocked / 60)} minuto(s).`,
+    });
+  }
+
+  const { username, password } = req.body || {};
   if (!db.admin) {
     return res.status(500).json({ error: 'No hay usuario admin configurado en el servidor.' });
   }
-  if (username !== db.admin.username) {
-    return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+
+  try {
+    // Se comprueba siempre la contraseña (y de forma asíncrona, sin bloquear el servidor),
+    // aunque el usuario no exista, para que el tiempo de respuesta no delate si el usuario es válido.
+    const userOk = sameString(typeof username === 'string' ? username : '', db.admin.username);
+    const passOk = await bcrypt.compare(typeof password === 'string' ? password : '', db.admin.passwordHash);
+    if (!userOk || !passOk) {
+      registerLoginFailure(ip);
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+    }
+  } catch (err) {
+    console.error('Error comprobando credenciales:', err.message);
+    return res.status(500).json({ error: 'Error interno del servidor.' });
   }
-  const ok = bcrypt.compareSync(password || '', db.admin.passwordHash);
-  if (!ok) {
-    return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
-  }
-  req.session.userId = db.admin.username;
-  res.json({ ok: true });
+
+  loginAttempts.delete(ip);
+  // Sesión nueva al iniciar sesión (evita la fijación de sesión).
+  req.session.regenerate((err) => {
+    if (err) {
+      console.error('Error regenerando la sesión:', err.message);
+      return res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+    req.session.userId = db.admin.username;
+    res.json({ ok: true });
+  });
 });
 
 app.post('/logout', (req, res) => {

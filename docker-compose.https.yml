@@ -37,6 +37,7 @@ services:
       - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
       - SIZE_CHECK_INTERVAL_MINUTES=${SIZE_CHECK_INTERVAL_MINUTES:-60}
       - COOKIE_SECURE=true
+      - TRUST_PROXY=1   # Caddy es el único proxy delante
       # - RESET_ADMIN=true
     restart: unless-stopped
     networks:

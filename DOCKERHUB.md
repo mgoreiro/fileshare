@@ -200,6 +200,8 @@ cuándo se ha descargado cada fichero y desde qué IP. Se guardan hasta las
 | `TELEGRAM_ALLOWED_CHAT_IDS` | Chats adicionales autorizados a usar los comandos del bot | `TELEGRAM_CHAT_ID` |
 | `COOKIE_SECURE` | Marca la cookie de sesión como solo-HTTPS (ponlo en `true` detrás de HTTPS) | `false` |
 | `RESET_ADMIN` | Si es `true`, fuerza a regenerar el usuario/contraseña admin al arrancar | `false` |
+| `TRUST_PROXY` | Proxies de confianza delante (X-Forwarded-For): `false` con el puerto 3000 publicado directamente, `1` detrás de un proxy | `false` |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MINUTES` | Intentos de login fallidos por IP antes del bloqueo, y minutos que dura (0 = sin límite) | `10` / `15` |
 
 ## Seguridad — antes de exponerlo a Internet
 
