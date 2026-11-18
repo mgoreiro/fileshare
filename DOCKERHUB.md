@@ -1,4 +1,4 @@
-# FileShare
+# Tossbox
 
 Sistema ligero de almacenamiento y compartición de ficheros, autoalojado, con
 panel de administración protegido por usuario/contraseña. Pensado para correr

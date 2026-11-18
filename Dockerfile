@@ -1,7 +1,7 @@
 # Imagen base con soporte multi-arquitectura oficial (incluye linux/arm64 y linux/arm/v7)
 FROM node:20-alpine
 
-LABEL org.opencontainers.image.title="FileShare" \
+LABEL org.opencontainers.image.title="Tossbox" \
       org.opencontainers.image.description="Sistema de almacenamiento y compartición de ficheros con panel de administración, carpeta vigilada y notificaciones de Telegram" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.authors="Miguel González Oreiro <mgoreiro@gmail.com>" \

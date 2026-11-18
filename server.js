@@ -491,7 +491,7 @@ async function handleStatusCommand(chatId) {
   const memMB = (process.memoryUsage().rss / 1024 / 1024).toFixed(1);
 
   const text =
-    `✅ FileShare en marcha\n` +
+    `✅ Tossbox en marcha\n` +
     `Tiempo activo: ${formatUptime(process.uptime())}\n` +
     `Ficheros almacenados: ${totalFiles}\n` +
     `Espacio ocupado: ${formatBytesForTelegram(totalSize)}\n` +

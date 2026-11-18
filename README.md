@@ -1,6 +1,8 @@
-# FileShare — self-hosted file sharing with direct links
+# Tossbox — self-hosted file sharing with direct links
 
 [Español](README.es.md)
+
+> Formerly called FileShare. The repository, Docker image and container are still named `fileshare`, so existing installs keep working.
 
 A small, self-hosted service in a single Docker container. Upload files from a
 password-protected admin panel and get a **direct, public download link** for
@@ -8,7 +10,7 @@ each one. Optional Telegram bot, watch folder and automatic HTTPS.
 
 **Author:** Miguel González Oreiro ([github.com/mgoreiro](https://github.com/mgoreiro))
 
-![FileShare admin panel](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
+![Tossbox admin panel](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
 
 ## Features
 
@@ -85,7 +87,7 @@ Caddy. Certificates are stored in the `caddy_data` volume. `BASE_URL`,
 The optional [caddy-tui](https://github.com/mgoreiro/caddy-tui) terminal tool
 can manage this Caddy (validated edits, diagnostics, certificate expiry,
 Telegram alerts, scanner blocking). It is a separate program and is not needed
-to run FileShare.
+to run Tossbox.
 
 ## Building for ARM
 

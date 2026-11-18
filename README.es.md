@@ -1,6 +1,8 @@
-# FileShare — Almacenamiento y compartición de ficheros
+# Tossbox — Almacenamiento y compartición de ficheros
 
 [English](README.md)
+
+> Antes llamado FileShare. El repositorio, la imagen Docker y el contenedor siguen llamándose `fileshare`, así que las instalaciones existentes siguen funcionando.
 
 **Autor:** Miguel González Oreiro ([mgoreiro@gmail.com](mailto:mgoreiro@gmail.com) · [github.com/mgoreiro](https://github.com/mgoreiro))
 
@@ -10,7 +12,7 @@ Sistema sencillo, contenido en un único contenedor Docker, para:
 - Generar automáticamente un **enlace directo de descarga** (público, sin login) para cada fichero.
 - Listar, copiar el enlace y eliminar ficheros desde el panel.
 
-![Panel de administración de FileShare](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
+![Panel de administración de Tossbox](https://raw.githubusercontent.com/mgoreiro/fileshare/main/docs/admin-panel.jpg)
 
 Está construido sin ninguna dependencia nativa (bcryptjs en vez de bcrypt, sin
 sqlite compilado, etc.), por lo que la imagen Docker es **100% compatible con
@@ -199,7 +201,7 @@ Encrypt — no hay que ejecutar `certbot` ni renovar nada a mano.
 ### Administrar Caddy con caddy-tui (opcional)
 
 **[caddy-tui](https://github.com/mgoreiro/caddy-tui)** es una interfaz de terminal para administrar el Caddy de esta
-variante HTTPS sin editar ficheros a ciegas. Es un programa aparte (no hace falta para que FileShare funcione) y
+variante HTTPS sin editar ficheros a ciegas. Es un programa aparte (no hace falta para que Tossbox funcione) y
 permite, entre otras cosas:
 
 - **Editar el `Caddyfile`** con validación antes de guardar, copia de seguridad, deshacer y **recarga sin cortes**.
@@ -230,7 +232,7 @@ puedes descargar el fichero **`caddy-tui_X.Y.Z_all.deb`** de la
 `sudo apt install ./caddy-tui_*_all.deb` (en ese caso las actualizaciones son manuales). Guía completa, actualizaciones
 automáticas y solución de problemas: [guía de instalación de caddy-tui](https://github.com/mgoreiro/caddy-tui/blob/main/docs/install.es.md).
 
-#### Uso con FileShare
+#### Uso con Tossbox
 
 ```bash
 sudo caddy-tui
@@ -248,9 +250,9 @@ Notas:
 
 - Para el monitor de tráfico, las estadísticas y el baneo de escáneres, el sitio necesita la directiva `log`
   (**ya incluida** en el `Caddyfile` de este proyecto).
-- Si, al configurar las alertas, quieres **reutilizar el bot de Telegram de FileShare**, indica tu `chat_id` cuando
+- Si, al configurar las alertas, quieres **reutilizar el bot de Telegram de Tossbox**, indica tu `chat_id` cuando
   caddy-tui lo pida (sin dejarlo vacío): la detección automática del chat usa `getUpdates`, que chocaría con el bot de
-  FileShare en funcionamiento. Lo más limpio es crear un bot aparte con @BotFather.
+  Tossbox en funcionamiento. Lo más limpio es crear un bot aparte con @BotFather.
 - caddy-tui valida la configuración **dentro del propio contenedor de Caddy** (`docker exec`): no crea ni destruye
   contenedores, así que no genera ruido en herramientas que vigilan los eventos de Docker.
 
